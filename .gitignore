@@ -1,0 +1,62 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sqlite3
+*.db
+
+# =========================
+# Virtual Environments
+# =========================
+venv/
+.env/
+.venv/
+
+# =========================
+# Environment Variables
+# =========================
+.env
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Data (DO NOT COMMIT)
+# =========================
+data/raw/
+data/processed/
+data/cache/
+data/artifacts/
+
+# =========================
+# FAISS
+# =========================
+*.index
+*.pkl
+
+# =========================
+# Model Weights
+# =========================
+models/
+checkpoints/
+
+# =========================
+# Frontend
+# =========================
+frontend/node_modules/
+frontend/dist/
+
+# =========================
+# OS / IDE
+# =========================
+.DS_Store
+.vscode/
+.idea/
+
+factgraph-city-demo 

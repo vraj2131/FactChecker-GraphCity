@@ -1,0 +1,18 @@
+sources:
+  fever:
+    enabled: true
+
+  wikipedia_dump:
+    enabled: true
+
+  newsapi:
+    enabled: true
+
+  guardian:
+    enabled: true
+
+  factcheck:
+    enabled: true
+
+  gdelt:
+    enabled: true

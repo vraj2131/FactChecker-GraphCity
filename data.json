@@ -1,0 +1,90 @@
+{
+  "nodes": [
+    {
+      "id": "c1",
+      "claim": "The Rodney King riots took place in the most populous county in the USA.",
+      "label": "SUPPORTED",
+      "confidence": 0.88,
+      "bestSourceUrl": "https://en.wikipedia.org/wiki/1992_Los_Angeles_riots",
+      "topSources": [
+        {"title": "Wikipedia: 1992 Los Angeles riots", "url": "https://en.wikipedia.org/wiki/1992_Los_Angeles_riots"},
+        {"title": "Wikipedia: Los Angeles County", "url": "https://en.wikipedia.org/wiki/Los_Angeles_County"}
+      ]
+    },
+    {
+      "id": "c2",
+      "claim": "Los Angeles County is the most populous county in the USA.",
+      "label": "SUPPORTED",
+      "confidence": 0.93,
+      "bestSourceUrl": "https://en.wikipedia.org/wiki/Los_Angeles_County",
+      "topSources": [
+        {"title": "Wikipedia: Los Angeles County", "url": "https://en.wikipedia.org/wiki/Los_Angeles_County"}
+      ]
+    },
+    {
+      "id": "c3",
+      "claim": "Oliver Reed was a film actor.",
+      "label": "SUPPORTED",
+      "confidence": 0.91,
+      "bestSourceUrl": "https://en.wikipedia.org/wiki/Oliver_Reed",
+      "topSources": [
+        {"title": "Wikipedia: Oliver Reed", "url": "https://en.wikipedia.org/wiki/Oliver_Reed"}
+      ]
+    },
+    {
+      "id": "c4",
+      "claim": "Lorelai Gilmore's father is named Robert.",
+      "label": "REFUTES",
+      "confidence": 0.96,
+      "bestSourceUrl": "https://en.wikipedia.org/wiki/Lorelai_Gilmore",
+      "topSources": [
+        {"title": "Wikipedia: Lorelai Gilmore", "url": "https://en.wikipedia.org/wiki/Lorelai_Gilmore"}
+      ]
+    },
+    {
+      "id": "c5",
+      "claim": "Henri Christophe is recognized for building a palace in Milot.",
+      "label": "NOT ENOUGH INFO",
+      "confidence": 0.62,
+      "bestSourceUrl": "",
+      "topSources": []
+    }
+  ],
+  "links": [
+    {
+      "source": "c1",
+      "target": "c2",
+      "type": "entails",
+      "weight": 0.92,
+      "inferred": false
+    },
+    {
+      "source": "c1",
+      "target": "c3",
+      "type": "semantic",
+      "weight": 0.10,
+      "inferred": true
+    },
+    {
+      "source": "c3",
+      "target": "c4",
+      "type": "semantic",
+      "weight": 0.05,
+      "inferred": true
+    },
+    {
+      "source": "c4",
+      "target": "c5",
+      "type": "semantic",
+      "weight": 0.12,
+      "inferred": true
+    },
+    {
+      "source": "c2",
+      "target": "c4",
+      "type": "contradicts",
+      "weight": 0.20,
+      "inferred": true
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+# =========================
+# Core Backend
+# =========================
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+pyyaml
+
+# =========================
+# ML / NLP
+# =========================
+torch
+transformers
+sentence-transformers
+datasets
+accelerate
+
+# =========================
+# Vector Search
+# =========================
+faiss-cpu
+
+# =========================
+# Data Processing
+# =========================
+pandas
+numpy
+scikit-learn
+tqdm
+
+# =========================
+# HTTP / APIs
+# =========================
+requests
+httpx
+
+# =========================
+# Caching / Serialization
+# =========================
+joblib
+
+# =========================
+# Optional (recommended)
+# =========================
+orjson
+loguru

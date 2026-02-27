@@ -1,0 +1,9 @@
+models:
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  nli_model: MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli
+  llm_model: Qwen/Qwen2.5-7B-Instruct
+
+inference:
+  device: cpu
+  batch_size: 8
+  max_input_length: 512

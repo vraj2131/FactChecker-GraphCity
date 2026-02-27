@@ -1,0 +1,14 @@
+app:
+  name: factgraph-city
+  env: development
+  debug: true
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+paths:
+  raw_data_dir: data/raw
+  processed_data_dir: data/processed
+  cache_dir: data/cache
+  artifacts_dir: data/artifacts
