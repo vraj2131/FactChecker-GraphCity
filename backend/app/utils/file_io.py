@@ -49,6 +49,25 @@ def iter_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON on line {line_num} of {path}: {e}") from e
 
+def write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
+    """
+    Write dictionaries to a JSONL file.
+    """
+    ensure_dir(path.parent)
+
+    with path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+def append_jsonl(path: Path, row: Dict[str, Any]) -> None:
+    """
+    Append one dictionary row to a JSONL file.
+    """
+    ensure_dir(path.parent)
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
 
 def list_jsonl_files(directory: Path) -> List[Path]:
     """
@@ -59,6 +78,16 @@ def list_jsonl_files(directory: Path) -> List[Path]:
 
     files = sorted(directory.glob("*.jsonl"))
     return files
+
+def read_json(path: Path) -> Any:
+    """
+    Read a JSON file from disk.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"JSON file not found: {path}")
+
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def write_json(path: Path, payload: Any, indent: int = 2) -> None:

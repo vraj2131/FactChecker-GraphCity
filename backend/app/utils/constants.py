@@ -77,3 +77,41 @@ FEVER_EVIDENCE_FAISS_INDEX_FILENAME = "fever_evidence.index"
 # -------------------------------------------------------------------
 DEFAULT_PHASE3_USE_SAMPLE = True
 DEFAULT_PHASE3_QUERY_COUNT = 5
+
+# -------------------------------------------------------------------
+# Phase 4: Retriever / cache settings
+# -------------------------------------------------------------------
+DEFAULT_RETRIEVER_MAX_RESULTS = 10
+DEFAULT_RETRIEVER_TIMEOUT_SECONDS = 30
+
+# -------------------------------------------------------------------
+# Retriever cache directories
+# -------------------------------------------------------------------
+DEFAULT_RETRIEVAL_CACHE_DIR = Path("data/cache/retrieval_results")
+DEFAULT_API_RESPONSE_CACHE_DIR = Path("data/cache/api_responses")
+
+# -------------------------------------------------------------------
+# Retriever source names
+# -------------------------------------------------------------------
+SOURCE_NAME_WIKIPEDIA = "wikipedia"
+SOURCE_NAME_FACTCHECK = "factcheck"
+SOURCE_NAME_GUARDIAN = "guardian"
+SOURCE_NAME_NEWSAPI = "newsapi"
+SOURCE_NAME_GDELT = "gdelt"
+
+SUPPORTED_RETRIEVER_SOURCES = [
+    SOURCE_NAME_WIKIPEDIA,
+    SOURCE_NAME_FACTCHECK,
+    SOURCE_NAME_GUARDIAN,
+    SOURCE_NAME_NEWSAPI,
+    SOURCE_NAME_GDELT,
+]
+
+# -------------------------------------------------------------------
+# Optional per-source defaults
+# -------------------------------------------------------------------
+DEFAULT_WIKIPEDIA_MAX_RESULTS = 10
+DEFAULT_FACTCHECK_MAX_RESULTS = 10
+DEFAULT_GUARDIAN_MAX_RESULTS = 10
+DEFAULT_NEWSAPI_MAX_RESULTS = 10
+DEFAULT_GDELT_MAX_RESULTS = 10
