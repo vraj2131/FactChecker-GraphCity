@@ -513,23 +513,10 @@ class NewsApiRetriever(BaseRetriever):
         author: Optional[str],
         publisher_name: Optional[str],
     ) -> str:
-        parts: List[str] = []
-
+        # Use only natural-language content. Author/publisher metadata appended
+        # with " | " breaks sentence splitting and adds noise for NLI inference.
         if description:
-            parts.append(description)
-
-        if not parts and content:
-            shortened_content = content[:220].strip()
-            if shortened_content:
-                parts.append(shortened_content)
-
-        if not parts and title:
-            parts.append(title)
-
-        if author:
-            parts.append(f"Author: {author}")
-
-        if publisher_name:
-            parts.append(f"Publisher: {publisher_name}")
-
-        return " | ".join(parts)
+            return description
+        if content:
+            return content[:220].strip()
+        return title or ""

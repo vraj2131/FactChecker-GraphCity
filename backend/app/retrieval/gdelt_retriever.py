@@ -434,18 +434,7 @@ class GDELTRetriever(BaseRetriever):
         language: Optional[str],
         sourcecountry: Optional[str],
     ) -> str:
-        parts: List[str] = []
-
-        if title:
-            parts.append(title)
-
-        if domain:
-            parts.append(f"Publisher: {domain}")
-
-        if language:
-            parts.append(f"Language: {language}")
-
-        if sourcecountry:
-            parts.append(f"Country: {sourcecountry}")
-
-        return " | ".join(parts)
+        # GDELT does not provide article body text — only the headline.
+        # Metadata fields (publisher, language, country) add noise for NLI
+        # without providing any claim-relevant content, so use title only.
+        return title or ""

@@ -173,30 +173,21 @@ class FactCheckRetriever(BaseRetriever):
         review_date: Optional[str],
         language_code: Optional[str],
     ) -> str:
-        parts = []
+        # Build a natural-language sentence so NLI can derive entailment/contradiction.
+        # "Claim reviewed: X | Rating: Y" is structured metadata — NLI models can't
+        # reliably infer supports/refutes from it.
+        if not claim_text:
+            return ""
 
-        if claim_text:
-            parts.append(f"Claim reviewed: {claim_text}")
-
-        if claimant:
-            parts.append(f"Claimant: {claimant}")
+        parts = [claim_text.strip()]
 
         if textual_rating:
-            parts.append(f"Rating: {textual_rating}")
+            parts.append(f"This claim was rated {textual_rating}.")
 
         if publisher_name:
-            parts.append(f"Publisher: {publisher_name}")
+            parts.append(f"Fact-checked by {publisher_name}.")
 
-        if claim_date:
-            parts.append(f"Claim date: {claim_date}")
-
-        if review_date:
-            parts.append(f"Review date: {review_date}")
-
-        if language_code:
-            parts.append(f"Language: {language_code}")
-
-        return " | ".join(parts)
+        return " ".join(parts)
 
     @staticmethod
     def _infer_stance_hint(textual_rating: Optional[str]) -> Optional[str]:

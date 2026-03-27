@@ -1,11 +1,19 @@
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
 
+from backend.app.preprocessing.normalize_text import normalize_snippet_text
 from backend.app.preprocessing.source_cleaner import (
     clean_page_title,
     clean_sentence_text,
+    truncate_to_char_limit,
+)
+from backend.app.utils.constants import (
+    DEFAULT_SNIPPET_MAX_CHARS,
+    DEFAULT_SNIPPET_MAX_SENTENCES,
+    DEFAULT_SNIPPET_MIN_WORDS,
 )
 from backend.app.utils.file_io import iter_jsonl, list_jsonl_files
 
@@ -214,3 +222,121 @@ def build_fever_evidence_snippets_dataframe(
     joined_df["snippet_text"] = joined_df["sentence_text"]
 
     return joined_df
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Claim-based sentence extraction from Source snippets
+# ---------------------------------------------------------------------------
+
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "of", "in", "on", "at", "to", "for", "from", "by", "with", "as",
+    "and", "or", "but", "it", "its", "this", "that", "which", "who",
+    "not", "no", "so", "if", "do", "did", "has", "have", "had",
+})
+
+
+def _tokenize(text: str) -> frozenset:
+    """Lowercase meaningful word set — stopwords excluded."""
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    return frozenset(
+        w for w in text.split() if len(w) >= 2 and w not in _STOP_WORDS
+    )
+
+
+def score_sentence_relevance(claim: str, sentence: str) -> float:
+    """
+    Score how relevant a sentence is to a claim.
+
+    Uses claim coverage ratio: fraction of meaningful claim terms found in
+    the sentence. Multi-term matches are required for a useful score —
+    sentences that match only a single claim term are heavily penalized.
+
+    Returns a float in [0, 1]. Higher is more relevant.
+    Returns 0.0 if either input is empty.
+    """
+    if not claim or not sentence:
+        return 0.0
+
+    claim_words = _tokenize(claim)
+    sentence_words = _tokenize(sentence)
+
+    if not claim_words or not sentence_words:
+        return 0.0
+
+    matched = claim_words & sentence_words
+    n_matched = len(matched)
+
+    if n_matched == 0:
+        return 0.0
+
+    # Fraction of the claim's key terms that appear in this sentence
+    coverage = n_matched / len(claim_words)
+
+    # Penalize single-term hits — "Paris" alone is weak evidence
+    if n_matched < 2:
+        coverage *= 0.3
+
+    return min(coverage, 1.0)
+
+
+def extract_best_snippet(
+    claim: str,
+    text: str,
+    max_sentences: int = DEFAULT_SNIPPET_MAX_SENTENCES,
+    max_chars: int = DEFAULT_SNIPPET_MAX_CHARS,
+) -> Optional[str]:
+    """
+    Extract the most claim-relevant sentences from a body of text.
+
+    Steps:
+    1. Split text into sentences on sentence-ending punctuation.
+    2. Filter out sentences shorter than DEFAULT_SNIPPET_MIN_WORDS words.
+    3. Score each sentence against the claim using Jaccard overlap.
+    4. Take the top max_sentences sentences, preserving their original order.
+    5. Join, normalize (HTML entities, whitespace), and truncate to max_chars.
+    6. Return None if no usable sentence is found.
+
+    Args:
+        claim:         The claim text to match against.
+        text:          The raw source body or snippet text.
+        max_sentences: Maximum number of sentences to include.
+        max_chars:     Hard character limit on the final snippet.
+
+    Returns:
+        A clean snippet string, or None if nothing usable was found.
+    """
+    if not claim or not text:
+        return None
+
+    # Split on sentence-ending punctuation followed by whitespace or end-of-string
+    raw_sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+
+    # Filter by minimum word count
+    usable = [
+        s for s in raw_sentences
+        if s.strip() and len(s.strip().split()) >= DEFAULT_SNIPPET_MIN_WORDS
+    ]
+
+    if not usable:
+        return None
+
+    # Score and keep track of original index for order preservation
+    scored = sorted(
+        enumerate(usable),
+        key=lambda idx_sent: score_sentence_relevance(claim, idx_sent[1]),
+        reverse=True,
+    )
+
+    # Take top-k by score, then restore original document order
+    top_k = sorted(scored[:max_sentences], key=lambda idx_sent: idx_sent[0])
+    selected = [s for _, s in top_k]
+
+    joined = " ".join(selected)
+    normalized = normalize_snippet_text(joined)
+
+    if not normalized:
+        return None
+
+    return truncate_to_char_limit(normalized, max_chars)

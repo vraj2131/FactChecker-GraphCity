@@ -50,3 +50,24 @@ def clean_source_text(text: Optional[str]) -> Optional[str]:
     cleaned = str(text).replace("\u00a0", " ").strip()
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned or None
+
+
+def truncate_to_char_limit(text: str, max_chars: int) -> str:
+    """
+    Truncate text to at most max_chars characters, breaking at a word boundary.
+
+    If len(text) <= max_chars, returns text unchanged.
+    Otherwise truncates at the last space before max_chars and appends "...".
+    If no space is found, hard-truncates at max_chars and appends "...".
+    """
+    if not text or len(text) <= max_chars:
+        return text
+
+    # Reserve 3 chars for the "..." suffix so the final result stays within max_chars
+    truncated = text[: max_chars - 3]
+    last_space = truncated.rfind(" ")
+
+    if last_space > 0:
+        truncated = truncated[:last_space]
+
+    return truncated + "..."

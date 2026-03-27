@@ -182,6 +182,7 @@
 #             return 0.0
 #         return min(score / 10.0, 1.0)
 
+import re
 from pathlib import Path
 from typing import Any, List, Optional, Set
 
@@ -325,7 +326,7 @@ class WikipediaRetriever(BaseRetriever):
         for _, row in raw_data.iterrows():
             page_title_clean = str(row["page_title_clean"])
             sentence_id = int(row["sentence_id"])
-            sentence_text = str(row["sentence_text"])
+            sentence_text = self._clean_annotation_markup(str(row["sentence_text"]))
 
             page_url = self._build_wikipedia_url(page_title_clean)
             source_id = f"wikipedia::{page_title_clean}::{sentence_id}"
@@ -396,6 +397,26 @@ class WikipediaRetriever(BaseRetriever):
     def _build_wikipedia_url(page_title_clean: str) -> str:
         page_slug = page_title_clean.replace(" ", "_")
         return f"https://en.wikipedia.org/wiki/{page_slug}"
+
+    @staticmethod
+    def _clean_annotation_markup(text: str) -> str:
+        """Strip FEVER wiki annotation markup appended after sentence text.
+
+        FEVER wiki sentences have the form:
+            "Actual sentence text. Entity1 Entity1_target Entity2 ..."
+        We keep only the actual sentence up to (and including) the first
+        sentence-ending punctuation mark, then decode FEVER bracket escapes.
+        """
+        match = re.search(r"[.!?]", text)
+        if match:
+            text = text[: match.end()].strip()
+        else:
+            text = text.strip()
+        # Decode FEVER bracket escapes
+        text = text.replace("-LRB-", "(").replace("-RRB-", ")")
+        text = text.replace("-LSB-", "[").replace("-RSB-", "]")
+        text = text.replace("-LCB-", "{").replace("-RCB-", "}")
+        return text
 
     @staticmethod
     def _normalize_score(score: float) -> float:
