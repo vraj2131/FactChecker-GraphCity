@@ -1,9 +1,21 @@
 models:
   embedding_model: sentence-transformers/all-MiniLM-L6-v2
-  nli_model: MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli
-  llm_model: Qwen/Qwen2.5-7B-Instruct
+  nli_model: cross-encoder/nli-deberta-v3-small
+  nli_confirm_model: MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli
+
+  # Local LLM tiers (HuggingFace)
+  llm_dev_model: Qwen/Qwen2.5-1.5B-Instruct       # ~3GB, fast on MPS
+  llm_prod_model: meta-llama/Llama-3.1-8B-Instruct # ~16GB, best quality
+  llm_active: dev                                   # change to "prod" for final runs
+
+  # Cloud LLM (Groq API — free tier, default for testing)
+  groq_model: llama-3.1-8b-instant
+  groq_prod_model: llama-3.3-70b-versatile
 
 inference:
-  device: cpu
-  batch_size: 8
-  max_input_length: 512
+  device: mps                   # mps (Apple Silicon) | cuda | cpu
+  nli_batch_size: 8
+  llm_max_new_tokens: 512
+  groq_max_tokens: 512
+  llm_max_input_sources: 5      # sources shown to LLM (5 dev, 8 prod)
+  prompt_version: v1

@@ -1,18 +1,45 @@
 sources:
   fever:
     enabled: true
+    description: Offline FEVER wiki evidence snippets (parquet index)
 
   wikipedia_dump:
     enabled: true
+    description: Offline FAISS-indexed Wikipedia sentence embeddings
 
-  newsapi:
+  livewiki:
     enabled: true
-
-  guardian:
-    enabled: true
+    description: Live Wikipedia API (real-time, no API key required)
+    max_results: 5
 
   factcheck:
     enabled: true
+    description: Google Fact Check Tools API
+    max_results: 10
+    adversarial_queries: true   # queried with debunking variants
+
+  guardian:
+    enabled: true
+    description: The Guardian content API
+    max_results: 10
+    adversarial_queries: true   # queried with debunking variants
+
+  newsapi:
+    enabled: true
+    description: NewsAPI.org
+    max_results: 10
 
   gdelt:
     enabled: true
+    description: GDELT Project live news index (no API key required)
+    max_results: 10
+    adversarial_queries: true   # queried with debunking variants
+
+# Source type priority for ranking (must sum components to ~1.0 each)
+priority:
+  factcheck: 1.0
+  guardian: 0.8
+  livewiki: 0.65
+  newsapi: 0.6
+  wikipedia: 0.5
+  gdelt: 0.3

@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from backend.app.models.nli_model import NLIModel, NLIResult
 from backend.app.schemas.source_schema import Source
@@ -57,7 +57,9 @@ class StanceService:
                 confirm_model.model_name,
             )
 
-    def classify(self, claim: str, sources: List[Source]) -> List[Source]:
+    def classify(
+        self, claim: str, sources: List[Source]
+    ) -> Tuple[List[Source], Dict[int, NLIResult]]:
         """
         Run NLI over all sources with snippets and set stance_hint.
 
@@ -69,8 +71,11 @@ class StanceService:
             sources: List of Source objects from EvidenceExpansionService.
 
         Returns:
-            List[Source] of the same length, with stance_hint set on sources
-            that have snippets. Sources without snippets pass through unchanged.
+            Tuple of:
+            - List[Source] of the same length, with stance_hint set on sources
+              that have snippets. Sources without snippets pass through unchanged.
+            - Dict[int, NLIResult] mapping source index → NLI result (for
+              downstream confidence scoring).
 
         Raises:
             ValueError: If claim is empty.
@@ -79,7 +84,7 @@ class StanceService:
             raise ValueError("claim cannot be empty.")
 
         if not sources:
-            return []
+            return [], {}
 
         # --- Step 1: cache lookup ---
         needs_nli: List[int] = []
@@ -148,7 +153,7 @@ class StanceService:
             claim[:60],
         )
 
-        return output
+        return output, all_nli
 
     def _run_cascade(
         self,

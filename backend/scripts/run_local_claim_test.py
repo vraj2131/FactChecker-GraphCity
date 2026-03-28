@@ -12,8 +12,10 @@ from backend.app.retrieval.livewiki_retriever import LiveWikiRetriever
 from backend.app.retrieval.newsapi_retriever import NewsApiRetriever
 from backend.app.retrieval.retriever_registry import RetrieverRegistry
 from backend.app.retrieval.wikipedia_retriever import WikipediaRetriever
+from backend.app.models.llm_model import LLMModel, GroqLLMModel, get_llm_model, get_groq_llm_model
 from backend.app.models.nli_model import NLIModel
 from backend.app.services.cache_service import CacheService
+from backend.app.services.confidence_service import ConfidenceService
 from backend.app.services.evidence_expansion_service import EvidenceExpansionService
 from backend.app.services.ranking_service import RankingService
 from backend.app.services.retrieval_service import RetrievalService
@@ -24,6 +26,10 @@ from backend.app.utils.constants import (
     DEFAULT_RETRIEVAL_CACHE_DIR,
     DEFAULT_RETRIEVER_MAX_RESULTS,
     FEVER_EVIDENCE_SNIPPETS_OUTPUT_FILENAME,
+    GROQ_MODEL_NAME,
+    LLM_FALLBACK_MODEL_NAME,
+    LLM_MAX_INPUT_SOURCES,
+    LLM_MODEL_NAME,
     NLI_CONFIRM_MODEL_NAME,
     NLI_MODEL_NAME,
 )
@@ -33,6 +39,25 @@ BENCHMARK_CLAIMS = [
     "The Eiffel Tower is located in Paris, France.",
     "The Great Wall of China is visible from space with the naked eye.",
     "Henri Christophe built a palace in Milot.",
+]
+
+# Confidence benchmark claims for --mode confidence
+CONFIDENCE_BENCHMARK = [
+    # Verified (high confidence expected)
+    ("The Eiffel Tower is located in Paris, France.", "verified"),
+    ("Water boils at 100 degrees Celsius at sea level.", "verified"),
+    ("Barack Obama was the 44th president of the United States.", "verified"),
+    # Rejected (high confidence expected)
+    ("The Great Wall of China is visible from space with the naked eye.", "rejected"),
+    ("Humans only use 10 percent of their brains.", "rejected"),
+    # NEI (low confidence expected)
+    ("A secret underground city exists beneath Denver Airport.", "not_enough_info"),
+    ("The number of cats in Tokyo exceeded 5 million in 2025.", "not_enough_info"),
+    # Mixed/contested
+    ("Coffee is good for your health.", "not_enough_info"),
+    ("Einstein failed math in school.", "rejected"),
+    # Specific/historical
+    ("Henri Christophe built a palace in Milot.", "verified"),
 ]
 
 
@@ -45,11 +70,13 @@ def parse_args() -> argparse.Namespace:
         "--mode",
         type=str,
         default="single",
-        choices=["single", "orchestrate", "snippet", "nli"],
+        choices=["single", "orchestrate", "snippet", "nli", "llm", "confidence"],
         help=(
             "single: test one retriever against --query (original behavior). "
             "orchestrate: run full RetrievalService against 3 benchmark claims. "
-            "nli: run full pipeline including NLI stance classification on --query."
+            "nli: run full pipeline including NLI stance classification on --query. "
+            "llm: run full pipeline including LLM source classification on --query. "
+            "confidence: run 10 benchmark claims through full pipeline + confidence scoring."
         ),
     )
 
@@ -154,6 +181,36 @@ def parse_args() -> argparse.Namespace:
             "Enable cascade NLI: fast model pre-filters, strong model confirms "
             "supports/refutes. Uses NLI_CONFIRM_MODEL_NAME from constants."
         ),
+    )
+
+    parser.add_argument(
+        "--llm-model",
+        type=str,
+        default=LLM_MODEL_NAME,
+        help=(
+            f"Primary HuggingFace model for LLM classification (default: {LLM_MODEL_NAME}). "
+            f"Automatically falls back to {LLM_FALLBACK_MODEL_NAME} if the primary fails to load. "
+            "Ignored when --llm-backend groq is set."
+        ),
+    )
+
+    parser.add_argument(
+        "--llm-backend",
+        type=str,
+        default="groq",
+        choices=["local", "groq"],
+        help=(
+            "local: run LLM inference on-device (Qwen/Llama via HuggingFace). "
+            "groq: use Groq cloud API — instant inference, requires GROQ_API_KEY in .env. "
+            f"Groq default model: {GROQ_MODEL_NAME}."
+        ),
+    )
+
+    parser.add_argument(
+        "--groq-model",
+        type=str,
+        default=GROQ_MODEL_NAME,
+        help=f"Groq model ID (default: {GROQ_MODEL_NAME}). Only used with --llm-backend groq.",
     )
 
     return parser.parse_args()
@@ -365,7 +422,7 @@ def run_nli(args: argparse.Namespace) -> None:
         confirm_model=confirm_model,
     )
 
-    classified = stance_svc.classify(args.query, sources)
+    classified, _nli_results = stance_svc.classify(args.query, sources)
 
     counts: dict = {"supports": 0, "refutes": 0, "insufficient": 0, "none": 0}
 
@@ -386,6 +443,199 @@ def run_nli(args: argparse.Namespace) -> None:
     print("=" * 80 + "\n")
 
 
+def run_llm(args: argparse.Namespace) -> None:
+    """Run full pipeline (retrieval → NLI → LLM) and print per-source classifications."""
+    if not args.query.strip():
+        print("[ERROR] --query is required for --mode llm.")
+        sys.exit(1)
+
+    cascade = args.use_cascade
+    backend = args.llm_backend
+
+    print("\n" + "=" * 80)
+    print("PHASE 8 LLM SOURCE CLASSIFICATION")
+    print("=" * 80)
+    print(f"Query        : {args.query}")
+    print(f"Backend      : {backend.upper()}")
+    if backend == "groq":
+        print(f"Groq model   : {args.groq_model}")
+    else:
+        print(f"LLM model    : {args.llm_model}")
+    print(f"NLI model    : {args.nli_model}")
+    print(f"Cascade NLI  : {cascade}")
+    print(f"Max results  : {args.max_results}")
+    print(f"LLM sources  : {LLM_MAX_INPUT_SOURCES}")
+    print("Loading models...")
+    print("=" * 80)
+
+    # 1. Retrieve sources
+    service = _build_service(args)
+    sources = service.retrieve(args.query, max_results=args.max_results, use_cache=False)
+    print(f"\n[Retrieval] {len(sources)} sources retrieved.")
+
+    if not sources:
+        print("[WARN] No sources retrieved — cannot run LLM classification.")
+        return
+
+    # 2. NLI stance classification
+    nli_model = NLIModel(model_name=args.nli_model)
+    confirm_model = NLIModel(model_name=NLI_CONFIRM_MODEL_NAME) if cascade else None
+    stance_svc = StanceService(
+        model=nli_model,
+        cache=CacheService(DEFAULT_RETRIEVAL_CACHE_DIR),
+        confirm_model=confirm_model,
+    )
+    classified, nli_results = stance_svc.classify(args.query, sources)
+    print(f"[NLI] Stance classification complete.")
+
+    # 3. Slice to LLM_MAX_INPUT_SOURCES
+    llm_input = classified[:LLM_MAX_INPUT_SOURCES]
+    print(f"[LLM] Sending {len(llm_input)} sources to {backend.upper()}...")
+
+    # 4. LLM classification — local or Groq
+    if backend == "groq":
+        llm = get_groq_llm_model(model_name=args.groq_model)
+    else:
+        llm = get_llm_model(model_name=args.llm_model, fallback_model_name=LLM_FALLBACK_MODEL_NAME)
+    result = llm.classify(args.query, llm_input)
+
+    # 5. Print per-source table
+    print("\n" + "=" * 80)
+    print("PER-SOURCE CLASSIFICATIONS")
+    print("=" * 80)
+    print(f"{'[i]':<5} {'classification':<22} {'nli_hint':<14} {'type':<12} title")
+    print("-" * 80)
+
+    # Build a lookup from index → classification
+    class_by_index = {sc.index: sc for sc in result.sources}
+
+    for i, source in enumerate(llm_input, start=1):
+        sc = class_by_index.get(i)
+        classification = sc.classification if sc else "insufficient"
+        rationale = sc.rationale if sc else ""
+        nli_hint = source.stance_hint or "none"
+        title = source.title[:45] if source.title else ""
+        print(f"[{i}]   {classification:<22} {nli_hint:<14} {source.source_type:<12} {title}")
+        if rationale:
+            print(f"       rationale: {rationale}")
+
+    # 6. Print overall verdict
+    print("\n" + "=" * 80)
+    print("OVERALL VERDICT")
+    print("=" * 80)
+    print(f"  verdict      : {result.overall_verdict}")
+    print(f"  confidence   : {result.confidence:.2f}")
+    print(f"  best source  : [{result.best_source_index}]")
+    print(f"  explanation  : {result.short_explanation}")
+    print("=" * 80 + "\n")
+
+
+def run_confidence(args: argparse.Namespace) -> None:
+    """Run 10 benchmark claims through full pipeline + confidence scoring."""
+    backend = args.llm_backend
+
+    claims = CONFIDENCE_BENCHMARK
+    # If --query is given, run a single claim instead
+    if args.query.strip():
+        claims = [(args.query.strip(), "unknown")]
+
+    print("\n" + "=" * 80)
+    print("PHASE 9 CONFIDENCE BENCHMARK")
+    print("=" * 80)
+    print(f"Backend      : {backend.upper()}")
+    print(f"Claims       : {len(claims)}")
+    print("Loading models...")
+    print("=" * 80)
+
+    # Build services
+    service = _build_service(args)
+    nli_model = NLIModel(model_name=args.nli_model)
+    confirm_model = NLIModel(model_name=NLI_CONFIRM_MODEL_NAME) if args.use_cascade else None
+    stance_svc = StanceService(
+        model=nli_model,
+        cache=CacheService(DEFAULT_RETRIEVAL_CACHE_DIR),
+        confirm_model=confirm_model,
+    )
+    if backend == "groq":
+        llm = get_groq_llm_model(model_name=args.groq_model)
+    else:
+        llm = get_llm_model(model_name=args.llm_model, fallback_model_name=LLM_FALLBACK_MODEL_NAME)
+    confidence_svc = ConfidenceService()
+
+    results_summary = []
+
+    for claim_text, expected in claims:
+        print(f"\n{'='*80}")
+        print(f"CLAIM: {claim_text}")
+        print(f"{'='*80}")
+        print(f"  Expected       : {expected}")
+
+        # 1. Retrieve
+        sources = service.retrieve(claim_text, max_results=args.max_results, use_cache=False)
+        if not sources:
+            print("  [WARN] No sources retrieved — skipping.")
+            results_summary.append((claim_text, expected, "skip", 0.0, False))
+            continue
+
+        # 2. NLI
+        classified, nli_results = stance_svc.classify(claim_text, sources)
+
+        # 3. LLM
+        llm_input = classified[:LLM_MAX_INPUT_SOURCES]
+        llm_result = llm.classify(claim_text, llm_input)
+        print(f"  LLM verdict    : {llm_result.overall_verdict:<14} (conf={llm_result.confidence:.2f})")
+
+        # 4. Confidence scoring
+        conf = confidence_svc.compute_main_confidence(llm_result, llm_input, nli_results)
+
+        print(f"  SUB-SCORES:")
+        print(f"    directional  : {conf.debug.get('directional', 0):.2f}  "
+              f"(support={conf.support_score:.2f}, refute={conf.refute_score:.2f})")
+        print(f"    llm_conf     : {conf.debug.get('llm_conf', 0):.2f}")
+        print(f"    quality      : {conf.evidence_quality:.2f}")
+        print(f"    corroboration: {conf.corroboration:.2f}  ({len(conf.debug.get('agreeing_types', []))} types)")
+        print(f"    coverage     : {conf.coverage:.2f}")
+        print(f"  RAW -> CALIBRATED: {conf.raw_confidence:.2f} -> {conf.overall_confidence:.2f}")
+        print(f"  FINAL          : {conf.overall_verdict} ({conf.overall_confidence:.2f})")
+
+        # 5. Edge confidences
+        class_by_idx = {sc.index: sc for sc in llm_result.sources}
+        print(f"\n  EDGE CONFIDENCES:")
+        for i, src in enumerate(llm_input, start=1):
+            sc = class_by_idx.get(i)
+            llm_class = sc.classification if sc else "insufficient"
+            nli = nli_results.get(i - 1)  # 0-indexed in nli_results
+            edge = confidence_svc.compute_edge_confidence(src, llm_class, nli)
+            marker = "  <-- correctly lower" if llm_class == "correlated_context" else ""
+            print(f"    [{i}] {llm_class:<22} edge={edge:.2f}  {src.source_type:<12}{marker}")
+
+        # Check pass/fail
+        passed = True
+        if expected != "unknown":
+            passed = conf.overall_verdict == expected
+            if conf.overall_confidence == 0.0 or conf.overall_confidence == 1.0:
+                passed = False
+            label = "[PASS]" if passed else "[FAIL]"
+            print(f"  {label} {'verdict matches' if passed else 'MISMATCH: got ' + conf.overall_verdict}")
+        results_summary.append((claim_text, expected, conf.overall_verdict, conf.overall_confidence, passed))
+
+    # Summary table
+    print(f"\n\n{'='*80}")
+    print("SUMMARY")
+    print(f"{'='*80}")
+    print(f"{'#':<3} {'Expected':<16} {'Actual':<16} {'Conf':<8} {'Pass':<6} Claim")
+    print("-" * 80)
+    total_pass = 0
+    for i, (claim_text, expected, actual, conf_val, passed) in enumerate(results_summary, 1):
+        if passed:
+            total_pass += 1
+        status = "PASS" if passed else ("SKIP" if actual == "skip" else "FAIL")
+        print(f"{i:<3} {expected:<16} {actual:<16} {conf_val:<8.2f} {status:<6} {claim_text[:50]}")
+
+    print(f"\nTotal: {total_pass}/{len(results_summary)} passed")
+    print("=" * 80 + "\n")
+
+
 def main() -> None:
     args = parse_args()
 
@@ -399,6 +649,14 @@ def main() -> None:
 
     if args.mode == "nli":
         run_nli(args)
+        return
+
+    if args.mode == "llm":
+        run_llm(args)
+        return
+
+    if args.mode == "confidence":
+        run_confidence(args)
         return
 
     # --- mode == "single" (original behavior) ---
@@ -425,5 +683,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
+        import traceback
         print(f"\n[ERROR] {e}")
+        traceback.print_exc()
         sys.exit(1)

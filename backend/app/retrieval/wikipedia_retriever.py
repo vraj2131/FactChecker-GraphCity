@@ -182,20 +182,33 @@
 #             return 0.0
 #         return min(score / 10.0, 1.0)
 
+import logging
+import pickle
 import re
 from pathlib import Path
 from typing import Any, List, Optional, Set
 
+import numpy as np
 import pandas as pd
 
+from backend.app.models.embedding_model import EmbeddingModel
 from backend.app.retrieval.base_retriever import BaseRetriever
 from backend.app.schemas.source_schema import Source
 from backend.app.utils.constants import (
+    DEFAULT_EMBEDDING_BATCH_SIZE,
+    DEFAULT_EMBEDDING_DEVICE,
+    DEFAULT_EMBEDDING_MODEL_NAME,
+    DEFAULT_FAISS_ARTIFACTS_DIR,
     DEFAULT_PROCESSED_DIR,
     DEFAULT_RETRIEVER_MAX_RESULTS,
+    FEVER_EVIDENCE_FAISS_INDEX_FILENAME,
+    FEVER_EVIDENCE_METADATA_FILENAME,
     FEVER_EVIDENCE_SNIPPETS_OUTPUT_FILENAME,
     SOURCE_NAME_WIKIPEDIA,
 )
+from backend.app.vectorstore.faiss_store import FaissStore
+
+logger = logging.getLogger(__name__)
 
 
 class WikipediaRetriever(BaseRetriever):
@@ -220,6 +233,10 @@ class WikipediaRetriever(BaseRetriever):
     def __init__(
         self,
         evidence_snippets_path: Optional[Path] = None,
+        use_faiss: bool = True,
+        faiss_index_path: Optional[Path] = None,
+        faiss_metadata_path: Optional[Path] = None,
+        embedding_model: Optional[EmbeddingModel] = None,
     ) -> None:
         super().__init__(source_name=SOURCE_NAME_WIKIPEDIA)
         self.evidence_snippets_path = evidence_snippets_path or (
@@ -227,12 +244,55 @@ class WikipediaRetriever(BaseRetriever):
         )
         self._evidence_df: Optional[pd.DataFrame] = None
 
+        # --- FAISS semantic search (optional, auto-discovered) ---
+        self._faiss_store: Optional[FaissStore] = None
+        self._faiss_metadata: Optional[List[dict]] = None
+        self._embedding_model: Optional[EmbeddingModel] = embedding_model
+
+        if use_faiss:
+            idx_path = faiss_index_path or (DEFAULT_FAISS_ARTIFACTS_DIR / FEVER_EVIDENCE_FAISS_INDEX_FILENAME)
+            meta_path = faiss_metadata_path or (DEFAULT_FAISS_ARTIFACTS_DIR / FEVER_EVIDENCE_METADATA_FILENAME)
+            if idx_path.exists() and meta_path.exists():
+                try:
+                    self._faiss_store = FaissStore.load(idx_path, embedding_dim=384)
+                    with open(meta_path, "rb") as f:
+                        self._faiss_metadata = pickle.load(f)
+                    if self._embedding_model is None:
+                        self._embedding_model = EmbeddingModel(
+                            model_name=DEFAULT_EMBEDDING_MODEL_NAME,
+                            device=DEFAULT_EMBEDDING_DEVICE,
+                        )
+                    print(
+                        f"[WikipediaRetriever] FAISS loaded: "
+                        f"{self._faiss_store.ntotal():,} vectors"
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "WikipediaRetriever: FAISS load failed, falling back to keyword search: %s", exc
+                    )
+                    self._faiss_store = None
+                    self._faiss_metadata = None
+            else:
+                logger.info(
+                    "WikipediaRetriever: FAISS index not found at %s — using keyword search. "
+                    "Run: python3 -m backend.scripts.build_faiss_indexes "
+                    "--index-type evidence "
+                    "--evidence-path data/processed/fever_evidence_snippets.parquet "
+                    "--device mps --skip-sanity-check",
+                    idx_path,
+                )
+
     def fetch_raw(
         self,
         query: str,
         max_results: int = DEFAULT_RETRIEVER_MAX_RESULTS,
         **kwargs: Any,
     ) -> pd.DataFrame:
+        # Use FAISS semantic search when available
+        if self._faiss_store is not None and self._embedding_model is not None:
+            return self._faiss_fetch(query, max_results)
+
+        # Keyword fallback
         df = self._load_evidence_df()
 
         query_tokens = self._tokenize(query)
@@ -310,6 +370,44 @@ class WikipediaRetriever(BaseRetriever):
         ).reset_index(drop=True)
 
         return scored_df.head(max_results).copy()
+
+    def _faiss_fetch(self, query: str, max_results: int) -> pd.DataFrame:
+        """Semantic search via FAISS — returns a DataFrame in the same shape as keyword search."""
+        query_vec = self._embedding_model.encode(
+            query,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        query_vec = np.ascontiguousarray(query_vec.reshape(1, -1).astype(np.float32))
+
+        distances, indices = self._faiss_store.search(query_vec, top_k=max_results * 3)
+
+        rows = []
+        seen = set()
+        for dist, idx in zip(distances[0].tolist(), indices[0].tolist()):
+            if idx < 0 or idx >= len(self._faiss_metadata):
+                continue
+            meta = self._faiss_metadata[idx]
+            key = (meta.get("page_title_clean", ""), meta.get("sentence_id"))
+            if key in seen:
+                continue
+            seen.add(key)
+            sentence_text = str(meta.get("sentence_text") or meta.get("snippet_text") or "")
+            rows.append({
+                "page_title_clean": meta.get("page_title_clean", ""),
+                "sentence_id": meta.get("sentence_id", 0),
+                "sentence_text": sentence_text,
+                "has_sentence_text": bool(sentence_text.strip()),
+                "retrieval_score": float(dist),  # cosine similarity already in [0, 1]
+            })
+
+        if not rows:
+            return pd.DataFrame(columns=["page_title_clean", "sentence_id", "sentence_text",
+                                          "has_sentence_text", "retrieval_score"])
+
+        df = pd.DataFrame(rows)
+        df = df[df["has_sentence_text"]].head(max_results).reset_index(drop=True)
+        return df
 
     def normalize(
         self,
@@ -391,7 +489,10 @@ class WikipediaRetriever(BaseRetriever):
     def _tokenize(cls, text: str) -> Set[str]:
         cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in str(text))
         tokens = {token for token in cleaned.split() if len(token) >= 2}
-        return {token for token in tokens if token not in cls.STOPWORDS}
+        # Exclude stopwords and pure-numeric tokens ("10", "100", "44") — these
+        # match too many unrelated page titles (e.g. "10_(film)") and add noise.
+        # Alphanumeric tokens like "44th" or "co2" are kept.
+        return {token for token in tokens if token not in cls.STOPWORDS and not token.isdigit()}
 
     @staticmethod
     def _build_wikipedia_url(page_title_clean: str) -> str:
@@ -422,4 +523,8 @@ class WikipediaRetriever(BaseRetriever):
     def _normalize_score(score: float) -> float:
         if score <= 0:
             return 0.0
+        # FAISS cosine similarity is already in [0, 1]; keyword scores are integers
+        # (typically 0–30+). Distinguish by whether the score is <= 1.0.
+        if score <= 1.0:
+            return score
         return min(score / 20.0, 1.0)

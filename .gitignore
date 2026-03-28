@@ -60,3 +60,6 @@ frontend/dist/
 .idea/
 
 factgraph-city-demo 
+
+presentation_script.md
+pipeline_overview.html

@@ -18,6 +18,28 @@ from backend.app.utils.hashing import build_cache_key
 
 logger = logging.getLogger(__name__)
 
+# Retrievers that benefit from adversarial/debunking query variants.
+# Offline retrievers (wikipedia) use embedding similarity and don't benefit from
+# keyword negations; live-wiki already searches live Wikipedia.
+_ADVERSARIAL_RETRIEVER_SOURCES = {"factcheck", "guardian", "gdelt"}
+
+# Max results fetched per adversarial query per retriever (kept low to avoid flooding)
+_ADVERSARIAL_MAX_RESULTS = 3
+
+
+def _adversarial_queries(claim: str) -> List[str]:
+    """
+    Generate debunking/counter-evidence search variants for a claim.
+
+    These extra queries help surface refuting evidence (myth-busting articles,
+    debunks) that a literal search for the claim text might miss.
+    """
+    base = claim.strip().rstrip(".")
+    return [
+        f"{base} myth debunked",
+        f"{base} false",
+    ]
+
 
 def _apply_source_diversity(sources: List[Source], max_per_type: int) -> List[Source]:
     """
@@ -74,6 +96,7 @@ class RetrievalService:
         sources: Optional[List[str]] = None,
         use_cache: bool = True,
         per_retriever_max: int = DEFAULT_PER_RETRIEVER_MAX_RESULTS,
+        expand_queries: bool = True,
     ) -> List[Source]:
         """
         Retrieve and return ranked, deduplicated evidence sources for a claim.
@@ -84,6 +107,9 @@ class RetrievalService:
             sources:          List of retriever names to query. Defaults to all registered.
             use_cache:        If True, check cache before querying and save result after.
             per_retriever_max: Max results requested from each individual retriever.
+            expand_queries:   If True, also query adversarial variants ("{claim} myth debunked",
+                              "{claim} false") against fact-check-focused retrievers to surface
+                              counter-evidence for potentially false claims.
 
         Returns:
             List[Source] sorted by descending relevance/trust score, length <= max_results.
@@ -179,6 +205,36 @@ class RetrievalService:
                 len(all_results),
                 len(available_sources) - len(failed_retrievers),
             )
+
+        # --- Adversarial query expansion (debunking variants) ---
+        if expand_queries:
+            adv_queries = _adversarial_queries(normalized_query)
+            adv_sources = [
+                s for s in available_sources
+                if s in _ADVERSARIAL_RETRIEVER_SOURCES and self._registry.is_registered(s)
+            ]
+            for adv_query in adv_queries:
+                for source_name in adv_sources:
+                    try:
+                        retriever = self._registry.get(source_name)
+                        adv_results = retriever.retrieve(
+                            query=adv_query,
+                            max_results=_ADVERSARIAL_MAX_RESULTS,
+                        )
+                        all_results.extend(adv_results)
+                        logger.debug(
+                            "Adversarial query '%s' via '%s': %d results",
+                            adv_query[:60],
+                            source_name,
+                            len(adv_results),
+                        )
+                    except Exception as exc:
+                        logger.debug(
+                            "Adversarial retriever '%s' failed for query='%s': %s",
+                            source_name,
+                            adv_query[:60],
+                            exc,
+                        )
 
         logger.info(
             "Raw results before dedup/rank: %d | per-source: %s",

@@ -12,3 +12,11 @@ paths:
   processed_data_dir: data/processed
   cache_dir: data/cache
   artifacts_dir: data/artifacts
+
+# Cache namespaces (subdirectories under cache_dir)
+cache_namespaces:
+  retrieval: retrieval_results
+  nli: nli_results
+  llm_local: llm_outputs
+  llm_groq: groq_outputs
+  api_responses: api_responses
