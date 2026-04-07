@@ -20,3 +20,15 @@ cache_namespaces:
   llm_local: llm_outputs
   llm_groq: groq_outputs
   api_responses: api_responses
+
+# LLM backend selection
+llm:
+  backend: groq                  # groq | local  (groq is default for all testing)
+  cache_enabled: true
+
+# Pipeline settings
+pipeline:
+  max_retrieval_results: 20      # total sources before dedup/rank
+  max_llm_input_sources: 5       # top sources sent to LLM
+  use_nli_cascade: false         # enable stronger confirm model for borderline NLI
+  use_faiss: true                # semantic FAISS search in WikipediaRetriever

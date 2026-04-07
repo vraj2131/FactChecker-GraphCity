@@ -1,0 +1,38 @@
+[
+  {
+    "source_id": "livewiki::212301",
+    "source_type": "livewiki",
+    "title": "Wikipedia: Champ de Mars",
+    "url": "https://en.wikipedia.org/wiki/Champ_de_Mars",
+    "publisher": "Wikipedia",
+    "snippet": "The Champ de Mars is a large public greenspace in Paris, France, located in the seventh arrondissement, between the Eiffel Tower to the northwest and the École Militaire to the southeast.",
+    "published_at": null,
+    "trust_score": 0.8,
+    "relevance_score": 1.0,
+    "stance_hint": null
+  },
+  {
+    "source_id": "livewiki::9232",
+    "source_type": "livewiki",
+    "title": "Wikipedia: Eiffel Tower",
+    "url": "https://en.wikipedia.org/wiki/Eiffel_Tower",
+    "publisher": "Wikipedia",
+    "snippet": "The Eiffel Tower is a lattice tower on the Champ de Mars in Paris, France.",
+    "published_at": null,
+    "trust_score": 0.8,
+    "relevance_score": 0.8,
+    "stance_hint": null
+  },
+  {
+    "source_id": "livewiki::4465969",
+    "source_type": "livewiki",
+    "title": "Wikipedia: List of tallest buildings and structures in the Paris region",
+    "url": "https://en.wikipedia.org/wiki/List_of_tallest_buildings_and_structures_in_the_Paris_region",
+    "publisher": "Wikipedia",
+    "snippet": "The tallest structure in the city of Paris and the Île-de-France is the Eiffel Tower in the 7th arrondissement, 330 meters high, completed in 1889 as the gateway to the 1889 Paris Universal Exposition.",
+    "published_at": null,
+    "trust_score": 0.8,
+    "relevance_score": 0.8,
+    "stance_hint": null
+  }
+]

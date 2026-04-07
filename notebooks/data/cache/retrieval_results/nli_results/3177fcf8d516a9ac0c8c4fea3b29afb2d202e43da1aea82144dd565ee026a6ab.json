@@ -1,0 +1,9 @@
+{
+  "label": "supports",
+  "confidence": 0.9878,
+  "scores": {
+    "refutes": 0.001,
+    "supports": 0.9878,
+    "not_enough_info": 0.0111
+  }
+}

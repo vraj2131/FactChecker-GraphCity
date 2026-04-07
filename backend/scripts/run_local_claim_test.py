@@ -17,9 +17,11 @@ from backend.app.models.nli_model import NLIModel
 from backend.app.services.cache_service import CacheService
 from backend.app.services.confidence_service import ConfidenceService
 from backend.app.services.evidence_expansion_service import EvidenceExpansionService
+from backend.app.services.graph_builder_service import GraphBuilderService
 from backend.app.services.ranking_service import RankingService
 from backend.app.services.retrieval_service import RetrievalService
 from backend.app.services.stance_service import StanceService
+from backend.app.services.verify_claim_service import VerifyClaimService
 from backend.app.utils.constants import DEFAULT_SNIPPET_MAX_CHARS
 from backend.app.utils.constants import (
     DEFAULT_PROCESSED_DIR,
@@ -70,13 +72,14 @@ def parse_args() -> argparse.Namespace:
         "--mode",
         type=str,
         default="single",
-        choices=["single", "orchestrate", "snippet", "nli", "llm", "confidence"],
+        choices=["single", "orchestrate", "snippet", "nli", "llm", "confidence", "graph"],
         help=(
             "single: test one retriever against --query (original behavior). "
             "orchestrate: run full RetrievalService against 3 benchmark claims. "
             "nli: run full pipeline including NLI stance classification on --query. "
             "llm: run full pipeline including LLM source classification on --query. "
-            "confidence: run 10 benchmark claims through full pipeline + confidence scoring."
+            "confidence: run 10 benchmark claims through full pipeline + confidence scoring. "
+            "graph: run full pipeline + graph builder, save JSON to data/artifacts/graph_samples/."
         ),
     )
 
@@ -636,6 +639,99 @@ def run_confidence(args: argparse.Namespace) -> None:
     print("=" * 80 + "\n")
 
 
+def run_graph(args: argparse.Namespace) -> None:
+    """Run full pipeline + graph builder on --query, save JSON to graph_samples/."""
+    claim = args.query.strip()
+    if not claim:
+        print("[ERROR] --query is required for --mode graph.")
+        sys.exit(1)
+
+    print("\n" + "=" * 80)
+    print("PHASE 10 GRAPH BUILDER")
+    print("=" * 80)
+    print(f"Claim   : {claim}")
+    print("Building services...")
+
+    verify_svc = VerifyClaimService.build_default(groq_model=args.groq_model)
+    builder = GraphBuilderService()
+
+    print("Running pipeline...")
+    result = verify_svc.verify(claim, use_cache=True)
+
+    print(f"  Sources retrieved : {len(result.sources)}")
+    print(f"  LLM verdict       : {result.llm_result.overall_verdict} (conf={result.llm_result.confidence:.2f})")
+    print(f"  Final verdict     : {result.confidence_output.overall_verdict} ({result.confidence_output.overall_confidence:.2f})")
+
+    graph = builder.build(result)
+
+    print("\n" + "-" * 80)
+    print("GRAPH OUTPUT")
+    print("-" * 80)
+    print(f"  Nodes : {graph.metadata.total_nodes}  "
+          f"(support={graph.metadata.support_node_count}, "
+          f"refute={graph.metadata.refute_node_count}, "
+          f"context={graph.metadata.context_node_count}, "
+          f"factcheck={graph.metadata.factcheck_node_count}, "
+          f"insufficient={graph.metadata.insufficient_node_count})")
+    print(f"  Edges : {graph.metadata.total_edges}")
+    print(f"  Verdict: {graph.metadata.overall_verdict} ({graph.metadata.overall_confidence:.2f})")
+
+    # Verify node fields
+    print("\n  NODE FIELD CHECK:")
+    issues = []
+    for node in graph.nodes:
+        if not node.node_id:
+            issues.append(f"  [WARN] node missing node_id")
+        if not node.color:
+            issues.append(f"  [WARN] {node.node_id} missing color")
+        if node.best_source_url is None and node.is_main_claim:
+            issues.append(f"  [WARN] main node missing best_source_url")
+        marker = " ← MAIN" if node.is_main_claim else ""
+        print(f"    {node.node_id:<16} type={node.node_type:<22} verdict={node.verdict:<12} "
+              f"conf={node.confidence:.2f}  color={node.color}  "
+              f"url={'YES' if node.best_source_url else 'MISSING'}{marker}")
+
+    print("\n  EDGE FIELD CHECK:")
+    for edge in graph.edges:
+        print(f"    {edge.source} → {edge.target:<16} type={edge.edge_type:<12} "
+              f"weight={edge.weight:.2f}  width={edge.width:.1f}  "
+              f"dashed={str(edge.dashed):<5}  color={edge.color}")
+
+    if issues:
+        print("\n  ISSUES:")
+        for iss in issues:
+            print(f"  {iss}")
+    else:
+        print("\n  [OK] All node/edge fields complete.")
+
+    # Node type matches edge type check
+    node_type_map = {n.node_id: n.node_type for n in graph.nodes}
+    edge_ok = True
+    for edge in graph.edges:
+        target_type = node_type_map.get(edge.target, "")
+        expected = {
+            "direct_support": "supports",
+            "direct_refute": "refutes",
+            "factcheck_review": "refutes",
+            "context_signal": "correlated",
+            "insufficient_evidence": "insufficient",
+        }.get(target_type, "insufficient")
+        if edge.edge_type != expected:
+            print(f"  [WARN] {edge.target}: node_type={target_type} but edge_type={edge.edge_type} (expected {expected})")
+            edge_ok = False
+    if edge_ok:
+        print("  [OK] All node types match edge types.")
+
+    # Save JSON
+    out_dir = Path("data/artifacts/graph_samples")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(c if c.isalnum() else "_" for c in claim[:40]).strip("_")
+    out_path = out_dir / f"graph_{safe_name}.json"
+    out_path.write_text(graph.model_dump_json(indent=2))
+    print(f"\n  [SAVED] {out_path}")
+    print("=" * 80 + "\n")
+
+
 def main() -> None:
     args = parse_args()
 
@@ -657,6 +753,10 @@ def main() -> None:
 
     if args.mode == "confidence":
         run_confidence(args)
+        return
+
+    if args.mode == "graph":
+        run_graph(args)
         return
 
     # --- mode == "single" (original behavior) ---

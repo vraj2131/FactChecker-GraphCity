@@ -1,0 +1,38 @@
+[
+  {
+    "source_id": "livewiki::534366",
+    "source_type": "livewiki",
+    "title": "Wikipedia: Barack Obama",
+    "url": "https://en.wikipedia.org/wiki/Barack_Obama",
+    "publisher": "Wikipedia",
+    "snippet": "Barack Hussein Obama II is an American politician who served as the 44th president of the United States from 2009 to 2017.",
+    "published_at": null,
+    "trust_score": 0.8,
+    "relevance_score": 1.0,
+    "stance_hint": null
+  },
+  {
+    "source_id": "livewiki::17775180",
+    "source_type": "livewiki",
+    "title": "Wikipedia: Family of Barack Obama",
+    "url": "https://en.wikipedia.org/wiki/Family_of_Barack_Obama",
+    "publisher": "Wikipedia",
+    "snippet": "The family of Barack Obama, the 44th president of the United States, is a prominent American family active in law, education, activism and politics.",
+    "published_at": null,
+    "trust_score": 0.8,
+    "relevance_score": 1.0,
+    "stance_hint": null
+  },
+  {
+    "source_id": "livewiki::52943093",
+    "source_type": "livewiki",
+    "title": "Wikipedia: Barack Obama's farewell address",
+    "url": "https://en.wikipedia.org/wiki/Barack_Obama's_farewell_address",
+    "publisher": "Wikipedia",
+    "snippet": "Barack Obama's farewell address was the final public speech of Barack Obama as the 44th President of the United States, delivered on January 10, 2017 at 9:00 p.m.",
+    "published_at": null,
+    "trust_score": 0.8,
+    "relevance_score": 1.0,
+    "stance_hint": null
+  }
+]

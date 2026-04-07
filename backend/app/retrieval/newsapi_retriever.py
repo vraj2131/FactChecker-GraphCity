@@ -48,6 +48,39 @@ class NewsApiRetriever(BaseRetriever):
         "news", "story", "article"
     }
 
+    # Verb forms that describe price/value movement.
+    # Treated as intents but also trigger the financial-context guard.
+    FINANCIAL_MOVEMENT_VERBS = {
+        "rose", "rise", "rises", "risen",
+        "fell", "fall", "falls", "fallen",
+        "climbed", "climb", "surged", "surge",
+        "dropped", "drop", "plunged", "plunge",
+        "gained", "gain", "lost", "lose",
+        "jumped", "jump", "slipped", "slip",
+        "rallied", "rally", "tumbled", "tumble",
+    }
+
+    # Unambiguous financial keywords — these almost never appear in product/deal listings.
+    # Deliberately excludes "stock"/"stocks" (used as "in stock") and "market"/"markets"
+    # (used in "supermarket", "flea market"). Used by the financial-context guard.
+    FINANCIAL_CONTEXT_KEYWORDS = {
+        "nasdaq", "nyse", "s&p 500", "stock market", "stock price",
+        "share price", "earnings", "revenue", "quarterly", "fiscal",
+        "investor", "investors", "equity", "portfolio", "dividend",
+        "ipo", "valuation", "wall street", "hedge fund", "bull market",
+        "bear market", "trading volume", "market cap", "short sell",
+        "brokerage", "securities", "shareholder",
+    }
+
+    # Domain fragments for deal/shopping aggregator sites.
+    # These are excluded from results when the query has financial context.
+    DEAL_SITE_DOMAINS = {
+        "slickdeals.net", "dansdeals.com", "dealnews.com",
+        "9to5toys.com", "9to5mac.com", "retailmenot.com",
+        "bensbargains.com", "gottadeal.com", "fatwallet.com",
+        "bradsdeals.com", "hip2save.com",
+    }
+
     LOW_SIGNAL_HOST_PATTERNS = {
         "consent.yahoo.com",
         "consent.",
@@ -317,6 +350,38 @@ class NewsApiRetriever(BaseRetriever):
                 score -= 8.0
             if intents and intent_title_hits == 0 and intent_description_hits == 0:
                 score -= 6.0
+
+        # Financial-context guard: if query contains a percentage (e.g. "5%") or a
+        # financial movement verb (rose, fell, surged…):
+        # 1. Block known deal/shopping aggregator domains — they match "rose gold" /
+        #    "rose petal" product listings and produce false positives.
+        # 2. Require that the title contains at least one financial indicator word
+        #    ("stock", "shares", "market", "nasdaq", "nyse", "earnings", "ipo", etc.)
+        #    OR that the publisher_name is a known finance outlet. This keeps
+        #    legitimate articles like "Amazon Stock Climbs..." while rejecting
+        #    product listicles that happen to contain "rose" or a percentage.
+        query_has_pct = "%" in query
+        query_has_movement_verb = any(
+            tok in self.FINANCIAL_MOVEMENT_VERBS
+            for tok in query.lower().split()
+        )
+        if query_has_pct or query_has_movement_verb:
+            # Step 1: hard-block deal/shopping aggregator sites
+            for deal_domain in self.DEAL_SITE_DOMAINS:
+                if deal_domain in title_lower or deal_domain in description_lower or deal_domain in content_lower:
+                    return 0.0
+
+            # Step 2: title must contain at least one financial indicator
+            TITLE_FINANCIAL_WORDS = {
+                "stock", "stocks", "share", "shares", "market", "markets",
+                "nasdaq", "nyse", "s&p", "index", "earnings", "revenue",
+                "ipo", "equity", "dividend", "investor", "investors",
+                "trading", "valuation", "quarterly", "fiscal",
+            }
+            title_words = set(title_lower.replace(",", " ").replace(".", " ").split())
+            has_financial_title = bool(title_words & TITLE_FINANCIAL_WORDS)
+            if not has_financial_title:
+                return 0.0
 
         return max(float(score), 0.0)
 

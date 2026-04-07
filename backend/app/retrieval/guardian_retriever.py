@@ -252,6 +252,25 @@ class GuardianRetriever(BaseRetriever):
         "down", "out", "off", "this", "that", "these", "those", "it", "its"
     }
 
+    # Financial movement verbs — trigger the financial-context guard
+    FINANCIAL_MOVEMENT_VERBS = {
+        "rose", "rise", "rises", "risen",
+        "fell", "fall", "falls", "fallen",
+        "climbed", "climb", "surged", "surge",
+        "dropped", "drop", "plunged", "plunge",
+        "gained", "gain", "lost", "lose",
+        "jumped", "jump", "slipped", "slip",
+        "rallied", "rally", "tumbled", "tumble",
+    }
+
+    # Financial keywords that must appear in the title when query is financial
+    FINANCIAL_TITLE_WORDS = {
+        "stock", "stocks", "share", "shares", "market", "markets",
+        "nasdaq", "nyse", "s&p", "index", "earnings", "revenue",
+        "ipo", "equity", "dividend", "investor", "investors",
+        "trading", "valuation", "quarterly", "fiscal",
+    }
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -372,10 +391,12 @@ class GuardianRetriever(BaseRetriever):
                 section_name=section_name,
             )
 
+            key_phrase = self._extract_key_phrase(query)
             ranking_score = self._compute_ranking_score(
                 query=query,
                 query_tokens=query_tokens,
                 likely_entities=likely_entities,
+                key_phrase=key_phrase,
                 title=title,
                 trail_text=trail_text,
                 body_text=body_text,
@@ -419,6 +440,7 @@ class GuardianRetriever(BaseRetriever):
         query: str,
         query_tokens: Set[str],
         likely_entities: List[str],
+        key_phrase: str,
         title: Optional[str],
         trail_text: Optional[str],
         body_text: Optional[str],
@@ -476,11 +498,55 @@ class GuardianRetriever(BaseRetriever):
             if title_overlap + trail_overlap <= 1 and exact_query_in_title == 0:
                 return 0.0
 
+        # Multi-word key-phrase guard:
+        # If the query has a 3+ word key phrase (e.g. "Great Wall of China"),
+        # require that at least one adjacent bigram from that phrase appears in
+        # the title or trail. This prevents "Great Wall of China" matching
+        # "Donald Trump is making China great again" (individual tokens match
+        # but "great wall" bigram does not).
+        # Threshold is 3+ words — 2-word phrases like "Amazon Stock" are too
+        # short to reliably bigram-match (synonym drift: "shares" ≠ "stock").
+        if key_phrase and len(key_phrase.split()) >= 3:
+            phrase_lower = key_phrase.lower()
+            phrase_words = phrase_lower.split()
+            phrase_in_title = phrase_lower in title_lower
+            phrase_in_trail = phrase_lower in trail_lower
+            if not phrase_in_title and not phrase_in_trail and exact_query_in_title == 0:
+                # Check if any adjacent bigram from the phrase appears
+                bigram_hit = any(
+                    f"{phrase_words[i]} {phrase_words[i+1]}" in title_lower
+                    or f"{phrase_words[i]} {phrase_words[i+1]}" in trail_lower
+                    for i in range(len(phrase_words) - 1)
+                    if phrase_words[i].lower() not in {"of", "the", "a", "an"}
+                )
+                if not bigram_hit:
+                    return 0.0
+
+        # Financial-context guard: if query has % or financial movement verbs,
+        # require the article title to contain a financial keyword.
+        # Prevents "Amazon delivery driver" / "The Rose Field" / "Kathleen Stock"
+        # from matching "Amazon Stock rose by 5%."
+        query_has_pct = "%" in query
+        query_has_movement_verb = any(
+            tok in self.FINANCIAL_MOVEMENT_VERBS
+            for tok in query.lower().split()
+        )
+        if query_has_pct or query_has_movement_verb:
+            title_words = set(title_lower.replace(",", " ").replace(".", " ").split())
+            if not (title_words & self.FINANCIAL_TITLE_WORDS):
+                return 0.0
+
         return float(score)
 
     def _build_query_variants(self, query: str) -> List[str]:
         """
-        Build a few Guardian-friendly query variants.
+        Build Guardian-friendly query variants.
+
+        Key improvements:
+        - Quoted multi-word entity phrases prevent false partial matches
+          e.g. "Great Wall of China" → '"Great Wall of China"' so Guardian
+          doesn't return "China" + "Wall Street" articles separately.
+        - Financial queries get share/percent synonym variants.
         """
         cleaned = self._safe_strip(query)
         if not cleaned:
@@ -501,24 +567,78 @@ class GuardianRetriever(BaseRetriever):
 
         add_variant(cleaned)
 
-        tokens = cleaned.split()
-        no_number_tokens = [tok for tok in tokens if not any(ch.isdigit() for ch in tok)]
-        add_variant(" ".join(no_number_tokens))
+        # Quoted key-phrase variant: extract consecutive capitalised words as a
+        # phrase and wrap in quotes so Guardian matches them together.
+        key_phrase = self._extract_key_phrase(cleaned)
+        if key_phrase and len(key_phrase.split()) >= 2:
+            add_variant(f'"{key_phrase}"')
 
+        # Entity-only variant (drops stopwords / numbers)
         likely_entities = self._extract_likely_entities(cleaned)
         if likely_entities:
             add_variant(" ".join(likely_entities))
 
-        # common finance wording improvements
+        # Finance synonym variants
         lowered = cleaned.lower()
-        if "stock" in lowered:
-            add_variant(cleaned.replace("stock", "shares"))
-        if "stocks" in lowered:
-            add_variant(cleaned.replace("stocks", "shares"))
+        if "stock" in lowered or "stocks" in lowered:
+            add_variant(cleaned.lower().replace("stocks", "shares").replace("stock", "shares"))
         if "%" in cleaned:
             add_variant(cleaned.replace("%", " percent"))
 
         return variants[:4]
+
+    @staticmethod
+    def _extract_key_phrase(text: str) -> str:
+        """
+        Extract the longest run of consecutive non-stopword, non-numeric tokens
+        that starts with a capitalised word. Used to build a quoted phrase variant
+        for Guardian so multi-word entities are matched as units.
+
+        Examples:
+          "The Great Wall of China is visible from space." → "Great Wall of China"
+          "Amazon Stock rose by 5%."                       → "Amazon Stock"
+          "Elon Musk bought Twitter for 44 billion."       → "Elon Musk"
+        """
+        _STOPS = {
+            "a", "an", "the", "is", "are", "was", "were", "be", "been",
+            "of", "in", "on", "at", "to", "for", "from", "by", "with", "as",
+            "and", "or", "but", "if", "then", "than", "it", "its",
+        }
+        raw_tokens = [tok.strip(".,:;!?()[]{}\"'") for tok in text.split()]
+        best_phrase: List[str] = []
+        current: List[str] = []
+
+        for tok in raw_tokens:
+            if not tok:
+                continue
+            if any(ch.isdigit() for ch in tok):
+                if current:
+                    if len(current) > len(best_phrase):
+                        best_phrase = current[:]
+                    current = []
+                continue
+            low = tok.lower()
+            if low in _STOPS:
+                # allow prepositions inside a phrase run but don't start one
+                if current:
+                    current.append(tok)
+                continue
+            if tok[0].isupper() or tok.isupper():
+                current.append(tok)
+            else:
+                if current:
+                    if len(current) > len(best_phrase):
+                        best_phrase = current[:]
+                    current = []
+
+        if current and len(current) > len(best_phrase):
+            best_phrase = current
+
+        # Strip trailing stopwords from the phrase
+        while best_phrase and best_phrase[-1].lower() in _STOPS:
+            best_phrase.pop()
+
+        return " ".join(best_phrase)
 
     @classmethod
     def _extract_likely_entities(cls, text: str) -> List[str]:

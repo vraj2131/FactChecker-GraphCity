@@ -40,6 +40,10 @@ class FactCheckRetriever(BaseRetriever):
     ) -> Dict[str, Any]:
         """
         Fetch raw claim search results from Google Fact Check Tools API.
+
+        Sends multiple query variants (original + entity-only + debunk variant)
+        and merges unique claims. This significantly improves coverage for science
+        myths and viral claims where the exact phrasing differs from indexed claims.
         """
         if not self.api_key:
             return {"claims": []}
@@ -47,24 +51,84 @@ class FactCheckRetriever(BaseRetriever):
         page_size = kwargs.get("page_size", max_results)
         review_publisher_site_filter = kwargs.get("review_publisher_site_filter")
 
-        params = {
-            "query": query,
-            "key": self.api_key,
-            "languageCode": self.language_code,
-            "pageSize": page_size,
+        query_variants = self._build_query_variants(query)
+        merged_claims: List[Dict[str, Any]] = []
+        seen_urls: set = set()
+
+        for variant in query_variants:
+            params = {
+                "query": variant,
+                "key": self.api_key,
+                "languageCode": self.language_code,
+                "pageSize": page_size,
+            }
+            if review_publisher_site_filter:
+                params["reviewPublisherSiteFilter"] = review_publisher_site_filter
+
+            try:
+                response = requests.get(
+                    self.BASE_URL,
+                    params=params,
+                    timeout=DEFAULT_RETRIEVER_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except Exception:
+                continue
+
+            for claim in data.get("claims", []) or []:
+                for review in claim.get("claimReview", []) or []:
+                    url = (review.get("url") or "").strip()
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        # Only add claim once (first review url as dedup key)
+                        break
+                else:
+                    continue
+                merged_claims.append(claim)
+
+        return {"claims": merged_claims}
+
+    @staticmethod
+    def _build_query_variants(query: str) -> List[str]:
+        """
+        Build up to 4 query variants for the Fact Check Tools API.
+
+        1. Original query (full sentence)
+        2. Key entities only (drops stopwords / verbs / numbers)
+        3. Debunk variant: key entities + "false" — surfaces myth-busting checks
+        4. Short entity variant: first 2-3 meaningful tokens only
+        """
+        _STOPS = {
+            "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+            "of", "in", "on", "at", "to", "for", "from", "by", "with", "as",
+            "and", "or", "but", "if", "then", "than", "into", "over", "under",
+            "after", "before", "during", "about", "between", "through",
+            "this", "that", "these", "those", "it", "its", "only", "just",
         }
+        raw_tokens = [tok.strip(".,:;!?()[]{}\"'") for tok in query.split()]
+        entity_tokens = [
+            tok for tok in raw_tokens
+            if tok and tok.lower() not in _STOPS and not tok.isdigit() and len(tok) >= 2
+        ]
 
-        if review_publisher_site_filter:
-            params["reviewPublisherSiteFilter"] = review_publisher_site_filter
+        variants: List[str] = []
+        seen: set = set()
 
-        response = requests.get(
-            self.BASE_URL,
-            params=params,
-            timeout=DEFAULT_RETRIEVER_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
+        def add(v: str) -> None:
+            v = v.strip()
+            if v and v.lower() not in seen:
+                seen.add(v.lower())
+                variants.append(v)
 
-        return response.json()
+        add(query)
+        if entity_tokens:
+            add(" ".join(entity_tokens))
+            add(" ".join(entity_tokens[:3]))
+            # Debunk variant: surfaces "X is false / myth / debunked" fact-checks
+            add(" ".join(entity_tokens[:4]) + " false")
+
+        return variants[:4]
 
     def normalize(
         self,

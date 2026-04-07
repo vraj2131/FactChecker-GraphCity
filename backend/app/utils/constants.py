@@ -1,21 +1,27 @@
 from pathlib import Path
 
+# Project root resolved from this file's location so all paths work
+# regardless of working directory (scripts, notebooks, FastAPI, tests).
+# constants.py lives at: backend/app/utils/constants.py
+# So 4 parents up = project root.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
 # -------------------------------------------------------------------
 # FEVER raw data default paths
 # -------------------------------------------------------------------
-DEFAULT_FEVER_TRAIN_PATH = Path("data/raw/fever/train.jsonl")
-DEFAULT_FEVER_DEV_PATH = Path("data/raw/fever/dev.jsonl")
-DEFAULT_FEVER_TEST_PATH = Path("data/raw/fever/test.jsonl")
+DEFAULT_FEVER_TRAIN_PATH = _PROJECT_ROOT / "data/raw/fever/train.jsonl"
+DEFAULT_FEVER_DEV_PATH   = _PROJECT_ROOT / "data/raw/fever/dev.jsonl"
+DEFAULT_FEVER_TEST_PATH  = _PROJECT_ROOT / "data/raw/fever/test.jsonl"
 
 # -------------------------------------------------------------------
 # FEVER wiki-pages path
 # -------------------------------------------------------------------
-DEFAULT_FEVER_WIKI_PAGES_DIR = Path("data/raw/fever/wiki-pages")
+DEFAULT_FEVER_WIKI_PAGES_DIR = _PROJECT_ROOT / "data/raw/fever/wiki-pages"
 
 # -------------------------------------------------------------------
 # Processed output directory
 # -------------------------------------------------------------------
-DEFAULT_PROCESSED_DIR = Path("data/processed")
+DEFAULT_PROCESSED_DIR = _PROJECT_ROOT / "data/processed"
 
 # -------------------------------------------------------------------
 # Processed FEVER output files
@@ -54,8 +60,8 @@ DEFAULT_FAISS_TOP_K = 5
 # -------------------------------------------------------------------
 # Embedding/cache directories
 # -------------------------------------------------------------------
-DEFAULT_EMBEDDINGS_CACHE_DIR = Path("data/cache/embeddings")
-DEFAULT_FAISS_ARTIFACTS_DIR = Path("data/artifacts/faiss")
+DEFAULT_EMBEDDINGS_CACHE_DIR = _PROJECT_ROOT / "data/cache/embeddings"
+DEFAULT_FAISS_ARTIFACTS_DIR  = _PROJECT_ROOT / "data/artifacts/faiss"
 
 # -------------------------------------------------------------------
 # Phase 3 output filenames (claims only)
@@ -87,8 +93,8 @@ DEFAULT_RETRIEVER_TIMEOUT_SECONDS = 30
 # -------------------------------------------------------------------
 # Retriever cache directories
 # -------------------------------------------------------------------
-DEFAULT_CACHE_DIR = Path("data/cache")
-DEFAULT_RETRIEVAL_CACHE_DIR = Path("data/cache/retrieval_results")
+DEFAULT_CACHE_DIR           = _PROJECT_ROOT / "data/cache"
+DEFAULT_RETRIEVAL_CACHE_DIR = _PROJECT_ROOT / "data/cache/retrieval_results"
 DEFAULT_API_RESPONSE_CACHE_DIR = Path("data/cache/api_responses")
 
 # -------------------------------------------------------------------
@@ -192,7 +198,7 @@ NLI_CONFIRM_MODEL_NAME = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
 
 # Minimum claim-relevance score for a snippet to be kept after expansion.
 # Requires at least 2 meaningful claim terms to overlap (single-term matches score ~0.06).
-SNIPPET_MIN_RELEVANCE_SCORE = 0.15
+SNIPPET_MIN_RELEVANCE_SCORE = 0.08
 
 # -------------------------------------------------------------------
 # Phase 8: LLM
@@ -223,7 +229,7 @@ LLM_MAX_NEW_TOKENS = 512
 LLM_CACHE_NAMESPACE = "llm_outputs"
 
 # Prompt version — bump this to bust the LLM cache when the prompt changes
-LLM_PROMPT_VERSION = "v1"
+LLM_PROMPT_VERSION = "v2"
 
 # Max sources shown to the LLM — 5 for dev speed, 8 for prod quality
 LLM_MAX_INPUT_SOURCES = 5
@@ -286,3 +292,59 @@ CONFIDENCE_NEI_CEILING = 0.45            # NEI/mixed scores capped here
 
 # --- Corroboration ---
 MIN_INDEPENDENT_SOURCES_FOR_BONUS = 2    # need 2+ distinct source types for bonus
+
+# -------------------------------------------------------------------
+# Context Expansion (contributing-factor retrieval)
+# -------------------------------------------------------------------
+
+# Enable/disable context expansion globally
+CONTEXT_EXPANSION_ENABLED = True
+
+# How many contributing-factor queries Groq generates per claim
+CONTEXT_EXPANSION_MAX_QUERIES = 3
+
+# Max results fetched per context query (kept low to avoid flooding the pool)
+CONTEXT_EXPANSION_MAX_RESULTS_PER_QUERY = 3
+
+# Retrievers used for context queries — live news sources only (Guardian,
+# NewsAPI, LiveWiki). FAISS/Wikipedia is offline FEVER data so irrelevant here.
+CONTEXT_EXPANSION_RETRIEVER_SOURCES = ["guardian", "newsapi", "livewiki", "gdelt"]
+
+# Cache namespace for generated context queries
+CONTEXT_EXPANSION_CACHE_NAMESPACE = "context_queries"
+
+# Bump to bust the query-generation cache when the prompt changes
+CONTEXT_EXPANSION_PROMPT_VERSION = "v1"
+
+# -------------------------------------------------------------------
+# Phase 10: Graph Builder
+# -------------------------------------------------------------------
+
+# --- Node colors by node_type ---
+NODE_COLOR_MAIN_VERIFIED     = "#2E7D32"   # green  — verified main claim
+NODE_COLOR_MAIN_REJECTED     = "#C62828"   # red    — rejected main claim
+NODE_COLOR_MAIN_NEI          = "#757575"   # grey   — not enough info
+NODE_COLOR_DIRECT_SUPPORT    = "#1565C0"   # blue   — direct support evidence
+NODE_COLOR_DIRECT_REFUTE     = "#BF360C"   # deep orange — direct refute evidence
+NODE_COLOR_FACTCHECK_REVIEW  = "#6A1B9A"   # purple — professional fact-check
+NODE_COLOR_CONTEXT_SIGNAL    = "#4A148C"   # violet — correlated context
+NODE_COLOR_INSUFFICIENT      = "#424242"   # dark grey — insufficient evidence
+
+# --- Node sizes ---
+NODE_SIZE_MAIN_CLAIM         = 24.0
+NODE_SIZE_DIRECT_EVIDENCE    = 10.0   # direct_support, direct_refute, factcheck_review
+NODE_SIZE_WEAK_EVIDENCE      = 7.0    # context_signal, insufficient_evidence
+
+# --- Edge colors by edge_type ---
+EDGE_COLOR_SUPPORTS          = "#1E88E5"   # blue
+EDGE_COLOR_REFUTES           = "#FB8C00"   # orange
+EDGE_COLOR_CORRELATED        = "#8E24AA"   # purple
+EDGE_COLOR_INSUFFICIENT      = "#BDBDBD"   # light grey
+
+# --- Edge widths (scaled by edge confidence weight) ---
+EDGE_WIDTH_MAX               = 6.0    # max visual width
+EDGE_WIDTH_MIN               = 0.5    # min visual width (never invisible)
+
+# --- Graph limits ---
+GRAPH_MAX_NODES              = 200
+GRAPH_MAX_TOP_SOURCES        = 5      # top_sources attached to main claim node

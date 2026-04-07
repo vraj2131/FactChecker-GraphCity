@@ -4,14 +4,27 @@ graph:
 
 node_sizes:
   main_claim: 24
-  evidence: 10
-  context: 8
+  direct_evidence: 10       # direct_support, direct_refute, factcheck_review
+  weak_evidence: 7          # context_signal, insufficient_evidence
 
-colors:
-  verified: "#2E7D32"
-  rejected: "#C62828"
-  not_enough_info: "#757575"
-  supports_edge: "#1E88E5"
-  refutes_edge: "#FB8C00"
-  correlated_edge: "#8E24AA"
-  insufficient_edge: "#BDBDBD"
+node_colors:
+  # Main claim node — verdict-driven
+  main_verified: "#2E7D32"
+  main_rejected: "#C62828"
+  main_not_enough_info: "#757575"
+  # Evidence nodes — type-driven
+  direct_support: "#1565C0"
+  direct_refute: "#BF360C"
+  factcheck_review: "#6A1B9A"
+  context_signal: "#4A148C"
+  insufficient_evidence: "#424242"
+
+edge_colors:
+  supports: "#1E88E5"
+  refutes: "#FB8C00"
+  correlated: "#8E24AA"
+  insufficient: "#BDBDBD"
+
+edge_widths:
+  max: 6.0
+  min: 0.5
