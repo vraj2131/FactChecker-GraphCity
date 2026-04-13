@@ -1,6 +1,8 @@
+import os
 from typing import Any, Dict, List, Optional
 
 import requests
+from dotenv import load_dotenv
 
 from backend.app.retrieval.base_retriever import BaseRetriever
 from backend.app.schemas.source_schema import Source
@@ -29,7 +31,8 @@ class FactCheckRetriever(BaseRetriever):
         language_code: str = "en-US",
     ) -> None:
         super().__init__(source_name=SOURCE_NAME_FACTCHECK)
-        self.api_key = api_key
+        load_dotenv()
+        self.api_key = api_key or os.getenv("FACTCHECK_API_KEY", "").strip() or None
         self.language_code = language_code
 
     def fetch_raw(

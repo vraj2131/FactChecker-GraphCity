@@ -5,13 +5,20 @@ import SideInfoPanel from './components/SideInfoPanel';
 import LegendPanel from './components/LegendPanel';
 import ClaimInputPanel from './components/ClaimInputPanel';
 import InfoTabsPanel from './components/InfoTabsPanel';
+import FilterPanel from './components/FilterPanel';
 import sampleGraph from './mock/sampleGraph.json';
 import { VERDICT_CONFIG } from './utils/colorMap';
+import { verifyClaim } from './api/client';
 import { GitBranch, Cpu, Layers } from 'lucide-react';
 
 const SIDE_PANEL_WIDTH = 360;
 
 export default function App() {
+  const [graphData, setGraphData]   = useState(sampleGraph);
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState(null);
+  const [filterVerdict, setFilter]  = useState(null);
+
   const [hoveredNode, setHoveredNode]   = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [mousePos, setMousePos]         = useState({ x: 0, y: 0 });
@@ -21,22 +28,38 @@ export default function App() {
   const handleMouseMove  = useCallback((pos)  => setMousePos(pos),      []);
   const handlePanelClose = useCallback(()     => setSelectedNode(null), []);
 
+  const handleVerify = useCallback(async (claimText) => {
+    setLoading(true);
+    setError(null);
+    setSelectedNode(null);
+    setFilter(null);
+    try {
+      const graph = await verifyClaim(claimText);
+      setGraphData(graph);
+    } catch (err) {
+      setError(err.message ?? 'Pipeline error — check backend logs.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const panelOpen  = !!selectedNode;
   const panelWidth = panelOpen ? SIDE_PANEL_WIDTH : 0;
 
-  const meta    = sampleGraph.metadata;
+  const meta    = graphData.metadata;
   const verdict = VERDICT_CONFIG[meta.overall_verdict] ?? VERDICT_CONFIG.not_enough_info;
 
   return (
     <div className="app">
-      {/* ── Full-screen 3D graph — shrinks when side panel is open ──────── */}
+      {/* ── Full-screen 3D graph ─────────────────────────────────────────── */}
       <GraphCanvas
-        graphJson={sampleGraph}
+        graphJson={graphData}
         onNodeHover={handleNodeHover}
         onNodeSelect={handleNodeSelect}
         onMouseMove={handleMouseMove}
         panelWidth={panelWidth}
         isNodeSelected={panelOpen}
+        filterVerdict={filterVerdict}
       />
 
       {/* ── UI overlays ──────────────────────────────────────────────────── */}
@@ -49,11 +72,11 @@ export default function App() {
               <GitBranch size={16} />
             </div>
             <span className="brand-name">FactGraph City</span>
-            <span className="brand-badge">Phase 12</span>
+            <span className="brand-badge">Phase 13</span>
           </div>
 
           <div className="top-bar-center">
-            <ClaimInputPanel />
+            <ClaimInputPanel onVerify={handleVerify} loading={loading} />
           </div>
 
           <div className="top-bar-right">
@@ -66,27 +89,44 @@ export default function App() {
 
         {/* Verdict strip */}
         <div className="verdict-strip">
-          <div
-            className="verdict-pill"
-            style={{ color: verdict.color, background: verdict.bg, borderColor: verdict.border }}
-          >
-            <span className="verdict-dot" style={{ background: verdict.color }} />
-            <span className="verdict-pill-label">{verdict.label}</span>
-            <span className="verdict-pill-conf">{Math.round(meta.overall_confidence * 100)}% confidence</span>
-          </div>
+          {loading ? (
+            <div className="verdict-loading">
+              <span className="verdict-loading-dot" />
+              <span className="verdict-loading-text">Analysing claim…</span>
+            </div>
+          ) : (
+            <div
+              className="verdict-pill"
+              style={{ color: verdict.color, background: verdict.bg, borderColor: verdict.border }}
+            >
+              <span className="verdict-dot" style={{ background: verdict.color }} />
+              <span className="verdict-pill-label">{verdict.label}</span>
+              <span className="verdict-pill-conf">{Math.round(meta.overall_confidence * 100)}% confidence</span>
+            </div>
+          )}
         </div>
 
-        {/* Bottom-left: legend */}
+        {/* Error toast */}
+        {error && (
+          <div className="error-toast" onClick={() => setError(null)}>
+            <span className="error-toast-icon">!</span>
+            {error}
+            <span className="error-toast-dismiss">×</span>
+          </div>
+        )}
+
+        {/* Bottom-left: legend + filter */}
         <div className="legend-anchor">
           <LegendPanel metadata={meta} />
+          <FilterPanel activeFilter={filterVerdict} onFilter={setFilter} />
         </div>
 
         {/* Bottom-right: sources + schema tabs */}
         <div className="itabs-anchor">
-          <InfoTabsPanel graphJson={sampleGraph} />
+          <InfoTabsPanel graphJson={graphData} />
         </div>
 
-        {/* Right: side panel — graph shrinks to make room, no overlap */}
+        {/* Right: side panel */}
         <div
           className="side-panel-anchor"
           style={{ width: SIDE_PANEL_WIDTH }}
@@ -95,7 +135,7 @@ export default function App() {
           <div className={`side-panel-slider ${panelOpen ? 'side-panel-slider--open' : ''}`}>
             <SideInfoPanel
               node={selectedNode}
-              graphJson={sampleGraph}
+              graphJson={graphData}
               onClose={handlePanelClose}
             />
           </div>
@@ -103,7 +143,7 @@ export default function App() {
       </div>
 
       {/* ── Tooltip ──────────────────────────────────────────────────────── */}
-      {hoveredNode && <NodeTooltip node={hoveredNode} pos={mousePos} />}
+      {hoveredNode && !loading && <NodeTooltip node={hoveredNode} pos={mousePos} />}
     </div>
   );
 }

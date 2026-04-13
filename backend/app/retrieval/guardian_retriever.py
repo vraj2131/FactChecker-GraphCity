@@ -217,9 +217,11 @@
 #         cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in str(text))
 #         return {token for token in cleaned.split() if len(token) >= 2}
 
+import os
 from typing import Any, Dict, List, Optional, Set
 
 import requests
+from dotenv import load_dotenv
 
 from backend.app.retrieval.base_retriever import BaseRetriever
 from backend.app.schemas.source_schema import Source
@@ -278,7 +280,8 @@ class GuardianRetriever(BaseRetriever):
         section: Optional[str] = None,
     ) -> None:
         super().__init__(source_name=SOURCE_NAME_GUARDIAN)
-        self.api_key = api_key
+        load_dotenv()
+        self.api_key = api_key or os.getenv("GUARDIAN_API_KEY", "").strip() or None
         self.show_fields = show_fields
         self.section = section
 

@@ -5,7 +5,7 @@ import { getEdgeStyle } from '../utils/edgeStyle';
 import { getNodeRadius, getGlowMultiplier } from '../utils/nodeSize';
 import { transformToForceGraph } from '../utils/graphTransforms';
 
-export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMouseMove, panelWidth = 0, isNodeSelected = false }) {
+export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMouseMove, panelWidth = 0, isNodeSelected = false, filterVerdict = null }) {
   const graphRef = useRef(null);
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
@@ -16,6 +16,10 @@ export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMo
   const isInteracting = useRef(false);
   const isNodeSelectedRef = useRef(isNodeSelected);
   const interactionTimer = useRef(null);
+
+  // Keep filterVerdict in a ref so the render loop reads it without stale closure
+  const filterVerdictRef = useRef(filterVerdict);
+  useEffect(() => { filterVerdictRef.current = filterVerdict; }, [filterVerdict]);
 
   // Keep ref in sync with prop (no stale closure in orbit loop)
   useEffect(() => {
@@ -213,18 +217,29 @@ export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMo
   // ── Pulse animation per frame ──────────────────────────────────────────────
   const handleRenderFrame = useCallback(() => {
     const t = Date.now() / 1000;
+    const activeFilter = filterVerdictRef.current;
+
     graphData.nodes.forEach((node) => {
+      // Dim nodes that don't match the active filter (main claim always visible)
+      const dimmed = activeFilter !== null
+        && !node.__isMain
+        && node.verdict !== activeFilter;
+
       if (node.__coreMesh) {
         const base = node.__isMain ? 0.55 : 0.32;
         const amp  = node.__isMain ? 0.22 : 0.12;
-        node.__coreMesh.material.emissiveIntensity =
-          base + amp * Math.sin(t * 1.4 + (node.__pulseOffset ?? 0));
+        node.__coreMesh.material.emissiveIntensity = dimmed
+          ? 0.04
+          : base + amp * Math.sin(t * 1.4 + (node.__pulseOffset ?? 0));
+        node.__coreMesh.material.opacity = dimmed ? 0.18 : 1.0;
+        node.__coreMesh.material.transparent = dimmed;
       }
       if (node.__haloMesh) {
         const base = node.__isMain ? 0.12 : 0.07;
         const amp  = node.__isMain ? 0.06 : 0.04;
-        node.__haloMesh.material.opacity =
-          base + amp * Math.sin(t * 1.4 + (node.__pulseOffset ?? 0));
+        node.__haloMesh.material.opacity = dimmed
+          ? 0.03
+          : base + amp * Math.sin(t * 1.4 + (node.__pulseOffset ?? 0));
       }
     });
   }, [graphData.nodes]);
