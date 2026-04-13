@@ -12,6 +12,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.api.routes_health import router as health_router
 from backend.app.api.routes_verify import router as verify_router
 
 logging.basicConfig(level=logging.INFO)
@@ -41,9 +42,5 @@ app.add_middleware(
 # -------------------------------------------------------------------
 # Routes
 # -------------------------------------------------------------------
+app.include_router(health_router)
 app.include_router(verify_router)
-
-
-@app.get("/health", tags=["health"])
-def health():
-    return {"status": "ok"}

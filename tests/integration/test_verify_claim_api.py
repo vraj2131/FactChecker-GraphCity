@@ -281,3 +281,13 @@ class TestHealthEndpoint:
         with TestClient(app) as c:
             resp = c.get("/health")
         assert resp.json() == {"status": "ok"}
+
+    def test_health_ready_returns_200(self):
+        with TestClient(app) as c:
+            resp = c.get("/health/ready")
+        assert resp.status_code == 200
+
+    def test_health_ready_returns_status_field(self):
+        with TestClient(app) as c:
+            resp = c.get("/health/ready")
+        assert "status" in resp.json()

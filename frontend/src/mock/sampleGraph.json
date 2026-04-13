@@ -1,0 +1,276 @@
+{
+  "metadata": {
+    "claim_text": "The Great Wall of China is visible from space with the naked eye.",
+    "overall_verdict": "rejected",
+    "overall_confidence": 0.82,
+    "total_nodes": 7,
+    "total_edges": 6,
+    "support_node_count": 1,
+    "refute_node_count": 2,
+    "insufficient_node_count": 0,
+    "context_node_count": 2,
+    "factcheck_node_count": 1,
+    "top_support_score": 0.38,
+    "top_refute_score": 0.91,
+    "retrieval_notes": "7 sources retrieved from: factcheck, guardian, wikipedia, newsapi, livewiki."
+  },
+  "nodes": [
+    {
+      "node_id": "node_main",
+      "node_type": "main_claim",
+      "text": "The Great Wall of China is visible from space with the naked eye.",
+      "verdict": "rejected",
+      "confidence": 0.82,
+      "size": 24.0,
+      "color": "#C62828",
+      "is_main_claim": true,
+      "source_count": 6,
+      "short_explanation": "Multiple authoritative sources — including NASA and scientific journals — confirm no astronaut has seen the Wall unaided from orbit. The wall is simply too narrow (15–30 ft wide) to resolve at orbital distances.",
+      "best_source_url": "https://www.nasa.gov/vision/space/workinginspace/great_wall.html",
+      "top_sources": [
+        {
+          "source_id": "src_main_01",
+          "source_type": "wikipedia",
+          "title": "Great Wall of China — Visibility from Space",
+          "url": "https://en.wikipedia.org/wiki/Great_Wall_of_China",
+          "publisher": "Wikipedia",
+          "snippet": "Visibility of the Great Wall from space has been a topic of discussion since the 1930s. In reality, it is not visible to the naked eye from low Earth orbit.",
+          "published_at": "2024-11-01",
+          "trust_score": 0.75,
+          "relevance_score": 0.94,
+          "stance_hint": "refutes"
+        }
+      ]
+    },
+    {
+      "node_id": "node_ev_01",
+      "node_type": "direct_refute",
+      "text": "NASA confirms no astronaut has ever seen the Great Wall from space without optical aids.",
+      "verdict": "refutes",
+      "confidence": 0.91,
+      "size": 10.0,
+      "color": "#BF360C",
+      "is_main_claim": false,
+      "source_count": 1,
+      "short_explanation": "NASA's official statement directly contradicts the claim — at orbital altitude the wall's width makes it physically impossible to resolve with the naked eye.",
+      "best_source_url": "https://www.nasa.gov/vision/space/workinginspace/great_wall.html",
+      "top_sources": [
+        {
+          "source_id": "src_ev01_01",
+          "source_type": "livewiki",
+          "title": "Can You See the Great Wall of China from Space?",
+          "url": "https://www.nasa.gov/vision/space/workinginspace/great_wall.html",
+          "publisher": "NASA",
+          "snippet": "Chinese astronaut Yang Liwei confirmed he could not see the Great Wall from space during his 2003 mission. The Wall is too narrow — about 15 to 30 feet wide — to be visible at orbital distances.",
+          "published_at": "2024-03-15",
+          "trust_score": 0.95,
+          "relevance_score": 0.91,
+          "stance_hint": "refutes"
+        }
+      ]
+    },
+    {
+      "node_id": "node_ev_02",
+      "node_type": "factcheck_review",
+      "text": "Snopes rates 'Great Wall visible from space' as FALSE. Multiple astronauts and NASA have denied the claim.",
+      "verdict": "refutes",
+      "confidence": 0.89,
+      "size": 10.0,
+      "color": "#6A1B9A",
+      "is_main_claim": false,
+      "source_count": 1,
+      "short_explanation": "Professional fact-checking outlet rates this a debunked myth. The myth originated from a 1932 encyclopedia entry and has been perpetuated for decades despite no supporting evidence.",
+      "best_source_url": "https://www.snopes.com/fact-check/great-wall-china-visible-space/",
+      "top_sources": [
+        {
+          "source_id": "src_ev02_01",
+          "source_type": "factcheck",
+          "title": "Can the Great Wall of China Be Seen from Space?",
+          "url": "https://www.snopes.com/fact-check/great-wall-china-visible-space/",
+          "publisher": "Snopes",
+          "snippet": "Rating: FALSE. The claim that the Great Wall of China is the only man-made structure visible from space is a popular myth. No astronaut has ever confirmed this with the naked eye.",
+          "published_at": "2023-08-22",
+          "trust_score": 0.92,
+          "relevance_score": 0.97,
+          "stance_hint": "refutes"
+        }
+      ]
+    },
+    {
+      "node_id": "node_ev_03",
+      "node_type": "direct_refute",
+      "text": "Scientific American: angular resolution of the human eye makes the Wall invisible at ISS altitude of 408 km.",
+      "verdict": "refutes",
+      "confidence": 0.87,
+      "size": 10.0,
+      "color": "#BF360C",
+      "is_main_claim": false,
+      "source_count": 1,
+      "short_explanation": "Physics-based analysis: at 400 km altitude, the human eye can resolve objects ~10 km wide. The Great Wall is only 5–9 m wide — roughly 1,000× too narrow to see.",
+      "best_source_url": "https://www.theguardian.com/science/great-wall-china-space",
+      "top_sources": [
+        {
+          "source_id": "src_ev03_01",
+          "source_type": "guardian",
+          "title": "Great Wall of China: Why You Cannot See It From Space",
+          "url": "https://www.theguardian.com/science/great-wall-china-space",
+          "publisher": "The Guardian",
+          "snippet": "At the altitude of the International Space Station (408 km), the angular resolution needed to resolve the Great Wall is far beyond the capability of the human eye without optical aids.",
+          "published_at": "2024-01-10",
+          "trust_score": 0.88,
+          "relevance_score": 0.85,
+          "stance_hint": "refutes"
+        }
+      ]
+    },
+    {
+      "node_id": "node_ev_04",
+      "node_type": "direct_support",
+      "text": "China Daily reported astronaut claims of spotting landmark structures during low-altitude passes with favorable visibility.",
+      "verdict": "supports",
+      "confidence": 0.38,
+      "size": 10.0,
+      "color": "#1565C0",
+      "is_main_claim": false,
+      "source_count": 1,
+      "short_explanation": "A minority contrarian claim from Chinese state media — considered low credibility. No scientific peer review, nationalistic bias. Inconsistent with all other evidence.",
+      "best_source_url": "https://www.chinadaily.com.cn/china/great-wall-space",
+      "top_sources": [
+        {
+          "source_id": "src_ev04_01",
+          "source_type": "newsapi",
+          "title": "China Astronaut Reports Seeing Landmarks From Orbit",
+          "url": "https://www.chinadaily.com.cn/china/great-wall-space",
+          "publisher": "China Daily",
+          "snippet": "A Chinese taikonaut reportedly observed large man-made structures during a low-altitude pass. Scientists caution the reports lack specifics about which structures were seen.",
+          "published_at": "2022-06-05",
+          "trust_score": 0.42,
+          "relevance_score": 0.71,
+          "stance_hint": "supports"
+        }
+      ]
+    },
+    {
+      "node_id": "node_ev_05",
+      "node_type": "context_signal",
+      "text": "Human eye angular resolution is approximately 1 arcminute — limiting visible detail at distances beyond 100 km.",
+      "verdict": "correlated",
+      "confidence": 0.72,
+      "size": 7.0,
+      "color": "#4A148C",
+      "is_main_claim": false,
+      "source_count": 1,
+      "short_explanation": "Contextual physics: the 1-arcminute resolution limit of the human eye is the key enabling condition. At 408 km altitude, minimum resolvable feature width is ~116 m — far greater than the Wall's 5–9 m width.",
+      "best_source_url": "https://en.wikipedia.org/wiki/Angular_resolution",
+      "top_sources": [
+        {
+          "source_id": "src_ev05_01",
+          "source_type": "wikipedia",
+          "title": "Angular Resolution — Human Eye",
+          "url": "https://en.wikipedia.org/wiki/Angular_resolution",
+          "publisher": "Wikipedia",
+          "snippet": "The human eye has a resolution of approximately 1 arcminute. At a distance of 400 km, this corresponds to a minimum resolvable feature of roughly 116 meters.",
+          "published_at": "2024-09-30",
+          "trust_score": 0.75,
+          "relevance_score": 0.68,
+          "stance_hint": "correlated"
+        }
+      ]
+    },
+    {
+      "node_id": "node_ev_06",
+      "node_type": "context_signal",
+      "text": "Commercial space tourism growth is bringing more civilian astronauts into orbit, generating fresh first-person visibility accounts.",
+      "verdict": "correlated",
+      "confidence": 0.44,
+      "size": 7.0,
+      "color": "#4A148C",
+      "is_main_claim": false,
+      "source_count": 1,
+      "short_explanation": "Broader contextual signal: increased orbital tourism generates new visibility testimonies. None have reported seeing the Great Wall unaided, further corroborating the scientific consensus.",
+      "best_source_url": "https://www.theguardian.com/science/space-tourism",
+      "top_sources": [
+        {
+          "source_id": "src_ev06_01",
+          "source_type": "guardian",
+          "title": "What Space Tourists Are Saying About Earth's Details From Orbit",
+          "url": "https://www.theguardian.com/science/space-tourism",
+          "publisher": "The Guardian",
+          "snippet": "As more civilians reach orbit with SpaceX and Blue Origin, accounts of Earth's visible features are multiplying. None have reported seeing the Great Wall unaided.",
+          "published_at": "2025-11-12",
+          "trust_score": 0.88,
+          "relevance_score": 0.52,
+          "stance_hint": "correlated"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "node_main",
+      "target": "node_ev_01",
+      "edge_type": "refutes",
+      "weight": 0.91,
+      "color": "#FB8C00",
+      "width": 3.5,
+      "dashed": false,
+      "label": "refutes",
+      "explanation": "NASA directly contradicts the claim with official astronaut reports."
+    },
+    {
+      "source": "node_main",
+      "target": "node_ev_02",
+      "edge_type": "refutes",
+      "weight": 0.89,
+      "color": "#FB8C00",
+      "width": 3.0,
+      "dashed": false,
+      "label": "fact-checked false",
+      "explanation": "Professional fact-check review rates the claim as definitively false."
+    },
+    {
+      "source": "node_main",
+      "target": "node_ev_03",
+      "edge_type": "refutes",
+      "weight": 0.87,
+      "color": "#FB8C00",
+      "width": 3.0,
+      "dashed": false,
+      "label": "refutes",
+      "explanation": "Physics-based analysis proves visibility is impossible at orbital altitude."
+    },
+    {
+      "source": "node_main",
+      "target": "node_ev_04",
+      "edge_type": "supports",
+      "weight": 0.38,
+      "color": "#1E88E5",
+      "width": 1.5,
+      "dashed": false,
+      "label": "weak support",
+      "explanation": "Low-credibility source claims visibility — inconsistent with scientific consensus."
+    },
+    {
+      "source": "node_main",
+      "target": "node_ev_05",
+      "edge_type": "correlated",
+      "weight": 0.68,
+      "color": "#8E24AA",
+      "width": 1.5,
+      "dashed": true,
+      "label": "context",
+      "explanation": "Angular resolution physics establishes the scientific basis for evaluating the claim."
+    },
+    {
+      "source": "node_main",
+      "target": "node_ev_06",
+      "edge_type": "correlated",
+      "weight": 0.44,
+      "color": "#8E24AA",
+      "width": 1.0,
+      "dashed": true,
+      "label": "context",
+      "explanation": "Space tourism generates new testimonies relevant to the broader claim domain."
+    }
+  ]
+}
