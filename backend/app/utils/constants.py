@@ -169,10 +169,11 @@ SOURCE_TYPE_PRIORITY_DEFAULT = 0.1
 RETRIEVAL_ORCHESTRATION_CACHE_NAMESPACE = "retrieval_results"
 
 # Max results fetched per individual retriever before merge/dedup
-DEFAULT_PER_RETRIEVER_MAX_RESULTS = 10
+DEFAULT_PER_RETRIEVER_MAX_RESULTS = 15
 
 # Maximum results kept per source type after ranking (prevents one source flooding the pool)
-MAX_RESULTS_PER_SOURCE_TYPE = 3
+# 5 per type × 6 retrievers = 30 max, ensures variety across all sources
+MAX_RESULTS_PER_SOURCE_TYPE = 5
 
 # -------------------------------------------------------------------
 # Phase 7: NLI
@@ -222,17 +223,17 @@ LLM_FALLBACK_MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
 # Device for LLM inference — "mps" for Apple Silicon GPU, "cuda" for NVIDIA, "cpu" fallback
 LLM_DEVICE = "mps"
 
-# Max new tokens — 512 fits 5-source JSON with rationales comfortably
-LLM_MAX_NEW_TOKENS = 512
+# Max new tokens — 4096 fits 50-source JSON with rationales + node_links
+LLM_MAX_NEW_TOKENS = 4096
 
 # Cache namespace for LLM outputs
 LLM_CACHE_NAMESPACE = "llm_outputs"
 
 # Prompt version — bump this to bust the LLM cache when the prompt changes
-LLM_PROMPT_VERSION = "v2"
+LLM_PROMPT_VERSION = "v3"
 
-# Max sources shown to the LLM — 5 for dev speed, 8 for prod quality
-LLM_MAX_INPUT_SOURCES = 5
+# Max sources shown to the LLM — 20 keeps request under Groq free-tier 6000 TPM limit
+LLM_MAX_INPUT_SOURCES = 20
 
 # -------------------------------------------------------------------
 # Phase 8b: Groq API (cloud LLM — free tier, Llama 3.1 quality)
@@ -242,11 +243,27 @@ LLM_MAX_INPUT_SOURCES = 5
 GROQ_MODEL_NAME = "llama-3.1-8b-instant"       # fast, free, Llama 3.1 8B quality
 GROQ_PROD_MODEL_NAME = "llama-3.3-70b-versatile"  # best quality on Groq free tier
 
-# Max tokens for the JSON response (same as local)
-GROQ_MAX_TOKENS = 512
+# Max tokens for the JSON response — 2048 fits 20 sources + node_links comfortably
+GROQ_MAX_TOKENS = 2048
 
 # Cache namespace for Groq outputs
 GROQ_CACHE_NAMESPACE = "groq_outputs"
+
+# -------------------------------------------------------------------
+# Phase 13: Inter-node edges
+# -------------------------------------------------------------------
+
+# LLM evaluates node_links only for the top N sources (by index in prompt)
+NODE_LINK_TOP_SOURCES = 15
+
+# Hard cap on LLM-returned inter-node pairs
+NODE_LINK_MAX_PAIRS = 20
+
+# Jaccard similarity threshold for heuristic shared_topic inter-node edges
+NODE_SIMILARITY_JACCARD_THRESHOLD = 0.22
+
+# Max heuristic inter-node edges added per graph (prevents visual clutter)
+NODE_SIMILARITY_MAX_EDGES = 40
 
 # -------------------------------------------------------------------
 # Phase 9: Confidence Service
@@ -341,9 +358,9 @@ EDGE_COLOR_REFUTES           = "#FB8C00"   # orange
 EDGE_COLOR_CORRELATED        = "#8E24AA"   # purple
 EDGE_COLOR_INSUFFICIENT      = "#BDBDBD"   # light grey
 
-# --- Edge widths (scaled by edge confidence weight) ---
-EDGE_WIDTH_MAX               = 6.0    # max visual width
-EDGE_WIDTH_MIN               = 0.5    # min visual width (never invisible)
+# --- Edge widths (scaled by edge confidence × relevance) ---
+EDGE_WIDTH_MAX               = 2.0    # max visual width (kept thin for clarity)
+EDGE_WIDTH_MIN               = 0.3    # min visual width (never invisible)
 
 # --- Graph limits ---
 GRAPH_MAX_NODES              = 200

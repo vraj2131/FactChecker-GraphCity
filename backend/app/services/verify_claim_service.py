@@ -67,7 +67,7 @@ class VerifyClaimService:
         stance_svc: StanceService,
         llm_model: GroqLLMModel,
         confidence_svc: ConfidenceService,
-        max_retrieval_results: int = 20,
+        max_retrieval_results: int = 60,
         llm_input_sources: int = LLM_MAX_INPUT_SOURCES,
         context_expansion_svc=None,   # Optional[ContextExpansionService]
     ) -> None:

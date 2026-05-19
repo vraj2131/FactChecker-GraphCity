@@ -15,7 +15,7 @@ short_explanation) and a best_source_url for click-to-redirect.
 import logging
 from typing import Optional
 
-from backend.app.graph.edge_factory import build_edges
+from backend.app.graph.edge_factory import build_edges, build_inter_node_edges
 from backend.app.graph.node_factory import build_evidence_nodes, build_main_node
 from backend.app.schemas.response_schema import GraphMetadata, GraphResponse
 from backend.app.services.confidence_service import ConfidenceService
@@ -69,14 +69,22 @@ class GraphBuilderService:
             confidence_svc=self._confidence_svc,
         )
 
-        # 3. Edges
-        edges = build_edges(
+        # 3. Main → evidence edges (star)
+        main_edges = build_edges(
             sources=sources,
             llm_result=llm,
             nli_results=nli,
             confidence_svc=self._confidence_svc,
         )
 
+        # 4. Evidence → evidence edges (inter-node: LLM node_links + Jaccard)
+        inter_edges = build_inter_node_edges(
+            sources=sources,
+            llm_result=llm,
+            confidence_svc=self._confidence_svc,
+        )
+
+        edges = main_edges + inter_edges
         all_nodes = [main_node] + evidence_nodes
 
         # 4. Metadata — count nodes by type

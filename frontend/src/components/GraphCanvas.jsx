@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import * as THREE from 'three';
 import { getEdgeStyle } from '../utils/edgeStyle';
 import { getNodeRadius, getGlowMultiplier } from '../utils/nodeSize';
 import { transformToForceGraph } from '../utils/graphTransforms';
 
-export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMouseMove, panelWidth = 0, isNodeSelected = false, filterVerdict = null }) {
+const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMouseMove, panelWidth = 0, isNodeSelected = false, filterVerdict = null }, ref) {
   const graphRef = useRef(null);
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
@@ -17,9 +17,7 @@ export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMo
   const isNodeSelectedRef = useRef(isNodeSelected);
   const interactionTimer = useRef(null);
 
-  // Keep filterVerdict in a ref so the render loop reads it without stale closure
-  const filterVerdictRef = useRef(filterVerdict);
-  useEffect(() => { filterVerdictRef.current = filterVerdict; }, [filterVerdict]);
+  // filterVerdict is used directly in callbacks (no ref needed — callbacks recreate on change)
 
   // Keep ref in sync with prop (no stale closure in orbit loop)
   useEffect(() => {
@@ -214,32 +212,36 @@ export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMo
     return group;
   }, []);
 
+  // ── Visibility callbacks — recreate when filterVerdict changes so the library
+  //    detects a prop change and re-applies visibility to all nodes/links ──────
+  const nodeVisibility = useCallback((node) => {
+    if (!filterVerdict) return true;
+    return node.__isMain || node.verdict === filterVerdict;
+  }, [filterVerdict]);
+
+  const linkVisibility = useCallback((link) => {
+    if (!filterVerdict) return true;
+    // Keep link only if BOTH endpoints are visible (main node is always visible)
+    const srcVisible = (link.source?.__isMain) || (link.source?.verdict ?? '') === filterVerdict;
+    const tgtVisible = (link.target?.__isMain) || (link.target?.verdict ?? '') === filterVerdict;
+    return srcVisible && tgtVisible;
+  }, [filterVerdict]);
+
   // ── Pulse animation per frame ──────────────────────────────────────────────
   const handleRenderFrame = useCallback(() => {
     const t = Date.now() / 1000;
-    const activeFilter = filterVerdictRef.current;
-
     graphData.nodes.forEach((node) => {
-      // Dim nodes that don't match the active filter (main claim always visible)
-      const dimmed = activeFilter !== null
-        && !node.__isMain
-        && node.verdict !== activeFilter;
-
       if (node.__coreMesh) {
         const base = node.__isMain ? 0.55 : 0.32;
         const amp  = node.__isMain ? 0.22 : 0.12;
-        node.__coreMesh.material.emissiveIntensity = dimmed
-          ? 0.04
-          : base + amp * Math.sin(t * 1.4 + (node.__pulseOffset ?? 0));
-        node.__coreMesh.material.opacity = dimmed ? 0.18 : 1.0;
-        node.__coreMesh.material.transparent = dimmed;
+        node.__coreMesh.material.emissiveIntensity =
+          base + amp * Math.sin(t * 1.4 + (node.__pulseOffset ?? 0));
       }
       if (node.__haloMesh) {
         const base = node.__isMain ? 0.12 : 0.07;
         const amp  = node.__isMain ? 0.06 : 0.04;
-        node.__haloMesh.material.opacity = dimmed
-          ? 0.03
-          : base + amp * Math.sin(t * 1.4 + (node.__pulseOffset ?? 0));
+        node.__haloMesh.material.opacity =
+          base + amp * Math.sin(t * 1.4 + (node.__pulseOffset ?? 0));
       }
     });
   }, [graphData.nodes]);
@@ -287,6 +289,33 @@ export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMo
     onNodeSelect?.(null);
   }, [onNodeSelect]);
 
+  // ── Snapshot ─────────────────────────────────────────────────────────────
+  // Force-render one frame then read the canvas. preserveDrawingBuffer keeps
+  // the WebGL buffer alive so toBlob() reads actual content, not a cleared buffer.
+  useImperativeHandle(ref, () => ({
+    snapshot() {
+      const graph = graphRef.current;
+      if (!graph) return;
+      const renderer = graph.renderer();
+      const scene    = graph.scene();
+      const camera   = graph.camera();
+      if (!renderer || !scene || !camera) return;
+      renderer.render(scene, camera);
+      renderer.domElement.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `factgraph-${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 'image/png');
+    },
+  }));
+
+
   return (
     <div
       style={{ position: 'absolute', inset: 0 }}
@@ -306,6 +335,8 @@ export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMo
         nodeThreeObject={nodeThreeObject}
         nodeThreeObjectExtend={false}
         nodeLabel={() => ''}
+        nodeVisibility={nodeVisibility}
+        linkVisibility={linkVisibility}
         // Links
         linkColor={(link) => link.color}
         linkWidth={(link) => link.width}
@@ -327,6 +358,8 @@ export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMo
         cooldownTicks={120}
         // Animation
         onRenderFramePre={handleRenderFrame}
+        // Snapshot — buffer must persist across frames
+        preserveDrawingBuffer={true}
         // Controls
         enableNodeDrag={true}
         enableNavigationControls={true}
@@ -334,4 +367,6 @@ export default function GraphCanvas({ graphJson, onNodeHover, onNodeSelect, onMo
       />
     </div>
   );
-}
+});
+
+export default GraphCanvas;

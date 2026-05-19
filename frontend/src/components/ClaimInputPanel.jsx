@@ -1,16 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Sparkles, Loader } from 'lucide-react';
 
 const DEMO_CLAIMS = [
-  'The Great Wall of China is visible from space.',
   'Vaccines cause autism.',
   'Barack Obama was the 44th President of the USA.',
   'Humans only use 10% of their brains.',
   'Amazon stock rose by 5% today.',
 ];
 
-export default function ClaimInputPanel({ onVerify, loading = false }) {
-  const [value, setValue] = useState(DEMO_CLAIMS[0]);
+export default function ClaimInputPanel({ onVerify, loading = false, claimText = '' }) {
+  const [value, setValue] = useState(claimText);
+
+  // Sync input with the last submitted claim (e.g. submitted from landing page)
+  useEffect(() => {
+    if (claimText) setValue(claimText);
+  }, [claimText]);
   const [focused, setFocused] = useState(false);
 
   const handleSubmit = () => {
