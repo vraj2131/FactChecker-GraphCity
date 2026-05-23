@@ -43,7 +43,7 @@ data/artifacts/
 # =========================
 # Model Weights
 # =========================
-models/
+
 checkpoints/
 
 # =========================
@@ -63,3 +63,5 @@ factgraph-city-demo
 
 presentation_script.md
 pipeline_overview.html
+
+plan.md
