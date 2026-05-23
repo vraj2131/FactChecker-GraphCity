@@ -1,4 +1,5 @@
 import { X, ExternalLink, Shield, Zap, BarChart3, Globe, MousePointer, Network } from 'lucide-react';
+import GaugePanel from './GaugePanel';
 import {
   NODE_TYPE_LABELS,
   VERDICT_CONFIG,
@@ -197,11 +198,14 @@ function MainClaimPanel({ node, graphJson, onClose }) {
 
         {/* Confidence bar */}
         <div className="side-panel-section">
-          <div className="section-label">
-            <BarChart3 size={13} />
-            Overall Confidence
-          </div>
-          <ConfidenceBar value={meta?.overall_confidence ?? node.confidence} color={node.color} />
+          <GaugePanel
+            value={meta?.overall_confidence ?? node.confidence}
+            label="Overall Confidence"
+            bars={[
+              { label: 'Support Strength', value: meta?.top_support_score ?? 0, color: '#3b82f6' },
+              { label: 'Refute Strength',  value: meta?.top_refute_score  ?? 0, color: '#f97316' },
+            ]}
+          />
         </div>
 
         {/* Analysis */}
@@ -338,11 +342,14 @@ function EvidencePanel({ node, onClose }) {
         <p className="side-panel-claim-text">{node.text}</p>
 
         <div className="side-panel-section">
-          <div className="section-label">
-            <BarChart3 size={13} />
-            Confidence Score
-          </div>
-          <ConfidenceBar value={node.confidence} color={node.color} />
+          <GaugePanel
+            value={node.confidence}
+            label={node.node_type === 'factcheck_review' ? 'Fact-Check Confidence' : 'Edge Confidence'}
+            bars={[
+              { label: 'Trust Score',     value: node.top_sources?.[0]?.trust_score     ?? 0, color: '#3b82f6' },
+              { label: 'Relevance Score', value: node.top_sources?.[0]?.relevance_score ?? 0, color: '#8b5cf6' },
+            ]}
+          />
         </div>
 
         {node.short_explanation && (
