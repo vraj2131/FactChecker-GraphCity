@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from backend.app.models.llm_model import LLMResult, NodeLink, SourceClassification
 from backend.app.models.nli_model import NLIResult
 from backend.app.schemas.edge_schema import Edge
+from backend.app.schemas.node_schema import Node
 from backend.app.schemas.source_schema import Source
 from backend.app.services.confidence_service import ConfidenceService
 from backend.app.utils.constants import (
@@ -264,4 +265,35 @@ def build_inter_node_edges(
         "Inter-node edges: %d LLM + %d heuristic = %d total",
         len(valid_links), heuristic_count, len(edges),
     )
+    return edges
+
+
+def build_extended_edges(ext_pairs: List[Tuple[Node, str]]) -> List[Edge]:
+    """
+    Build edges connecting each Tier 2 extended node to its Tier 1 parent.
+
+    Args:
+        ext_pairs: List of (extended_node, parent_node_id) from build_extended_nodes().
+
+    Returns:
+        List of Edge objects (parent → child, thinner than Tier 1 edges).
+    """
+    edges: List[Edge] = []
+    for ext_node, parent_node_id in ext_pairs:
+        edge_type = "supports" if ext_node.node_type == "direct_support" else "refutes"
+        color = EDGE_COLOR_SUPPORTS if edge_type == "supports" else EDGE_COLOR_REFUTES
+
+        edges.append(Edge(
+            source=parent_node_id,
+            target=ext_node.node_id,
+            edge_type=edge_type,
+            weight=round(ext_node.confidence, 3),
+            color=color,
+            width=max(_edge_width(ext_node.confidence) * 0.65, EDGE_WIDTH_MIN),
+            dashed=False,
+            label=edge_type,
+            explanation=None,
+        ))
+
+    logger.info("Extended edges: %d Tier-2 branch edges built", len(edges))
     return edges

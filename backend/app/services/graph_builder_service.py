@@ -15,8 +15,8 @@ short_explanation) and a best_source_url for click-to-redirect.
 import logging
 from typing import Optional
 
-from backend.app.graph.edge_factory import build_edges, build_inter_node_edges
-from backend.app.graph.node_factory import build_evidence_nodes, build_main_node
+from backend.app.graph.edge_factory import build_edges, build_extended_edges, build_inter_node_edges
+from backend.app.graph.node_factory import build_evidence_nodes, build_extended_nodes, build_main_node
 from backend.app.schemas.response_schema import GraphMetadata, GraphResponse
 from backend.app.services.confidence_service import ConfidenceService
 from backend.app.services.verify_claim_service import VerifyClaimResult
@@ -84,10 +84,21 @@ class GraphBuilderService:
             confidence_svc=self._confidence_svc,
         )
 
-        edges = main_edges + inter_edges
-        all_nodes = [main_node] + evidence_nodes
+        # 5. Tier 2 extended branch nodes + edges (sources beyond LLM input)
+        ext_pool = result.sources[len(sources):]
+        ext_pairs = build_extended_nodes(
+            extended_pool=ext_pool,
+            tier1_nodes=evidence_nodes,
+            tier1_sources=sources,
+            confidence_svc=self._confidence_svc,
+        )
+        ext_nodes = [node for node, _ in ext_pairs]
+        ext_edges = build_extended_edges(ext_pairs)
 
-        # 4. Metadata — count nodes by type
+        edges = main_edges + inter_edges + ext_edges
+        all_nodes = [main_node] + evidence_nodes + ext_nodes
+
+        # 6. Metadata — count nodes by type
         support_count  = sum(1 for n in evidence_nodes if n.node_type == "direct_support")
         refute_count   = sum(1 for n in evidence_nodes if n.node_type == "direct_refute")
         insuff_count   = sum(1 for n in evidence_nodes if n.node_type == "insufficient_evidence")

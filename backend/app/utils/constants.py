@@ -365,3 +365,8 @@ EDGE_WIDTH_MIN               = 0.3    # min visual width (never invisible)
 # --- Graph limits ---
 GRAPH_MAX_NODES              = 200
 GRAPH_MAX_TOP_SOURCES        = 5      # top_sources attached to main claim node
+
+# --- Feature 2: Extended (Tier 2) branch nodes ---
+EXTENDED_NODES_PER_PARENT        = 3     # max Tier 2 children per Tier 1 parent
+EXTENDED_NODE_JACCARD_THRESHOLD  = 0.25  # min snippet Jaccard similarity for attachment
+NODE_SIZE_EXTENDED_EVIDENCE      = 6.0   # Tier 2 node size (smaller than Tier 1's 10.0)

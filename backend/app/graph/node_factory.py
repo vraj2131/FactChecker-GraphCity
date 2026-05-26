@@ -5,7 +5,7 @@ Builds Node objects from pipeline outputs (sources, LLM classifications,
 confidence scores). Called by graph_builder_service.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 from backend.app.models.llm_model import LLMResult, SourceClassification
 from backend.app.models.nli_model import NLIResult
@@ -13,6 +13,8 @@ from backend.app.schemas.node_schema import Node
 from backend.app.schemas.source_schema import Source
 from backend.app.services.confidence_service import ConfidenceOutput, ConfidenceService
 from backend.app.utils.constants import (
+    EXTENDED_NODE_JACCARD_THRESHOLD,
+    EXTENDED_NODES_PER_PARENT,
     GRAPH_MAX_TOP_SOURCES,
     NODE_COLOR_CONTEXT_SIGNAL,
     NODE_COLOR_DIRECT_REFUTE,
@@ -23,6 +25,7 @@ from backend.app.utils.constants import (
     NODE_COLOR_MAIN_REJECTED,
     NODE_COLOR_MAIN_VERIFIED,
     NODE_SIZE_DIRECT_EVIDENCE,
+    NODE_SIZE_EXTENDED_EVIDENCE,
     NODE_SIZE_MAIN_CLAIM,
     NODE_SIZE_WEAK_EVIDENCE,
 )
@@ -179,3 +182,103 @@ def build_evidence_nodes(
         ))
 
     return nodes
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 tokenizer helpers (intentionally local — avoids cross-module import)
+# ---------------------------------------------------------------------------
+
+_EXT_STOPWORDS: Set[str] = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "of", "in", "on", "at", "to", "for", "from", "by", "with", "as",
+    "and", "or", "but", "if", "then", "than", "it", "its", "this", "that",
+    "have", "has", "had", "not", "no", "so", "about", "into", "over",
+}
+
+
+def _ext_tokenize(text: str) -> Set[str]:
+    cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in (text or ""))
+    return {t for t in cleaned.split() if len(t) >= 3 and t not in _EXT_STOPWORDS}
+
+
+def _ext_jaccard(a: Set[str], b: Set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def build_extended_nodes(
+    extended_pool: List[Source],
+    tier1_nodes: List[Node],
+    tier1_sources: List[Source],
+    confidence_svc: ConfidenceService,
+) -> List[Tuple[Node, str]]:
+    """
+    Build Tier 2 branch nodes from the unused source pool (sources beyond LLM input).
+
+    For each Tier 1 direct_support / direct_refute node, attach up to
+    EXTENDED_NODES_PER_PARENT child nodes whose:
+      - stance_hint matches the parent direction (supports / refutes)
+      - Jaccard similarity with the parent snippet >= EXTENDED_NODE_JACCARD_THRESHOLD
+      - Same source_type as parent gets a small similarity bonus
+
+    Returns a list of (Node, parent_node_id) tuples consumed by build_extended_edges().
+    """
+    if not extended_pool or not tier1_nodes:
+        return []
+
+    results: List[Tuple[Node, str]] = []
+    used_ids: Set[str] = set()
+
+    for i, (t1_node, t1_source) in enumerate(zip(tier1_nodes, tier1_sources), start=1):
+        if t1_node.node_type not in ("direct_support", "direct_refute"):
+            continue
+
+        required_stance = "supports" if t1_node.node_type == "direct_support" else "refutes"
+        llm_class = "direct_support" if t1_node.node_type == "direct_support" else "direct_refute"
+        parent_tokens = _ext_tokenize((t1_source.snippet or "") + " " + t1_source.title)
+
+        candidates: List[Tuple[float, Source]] = []
+        for ext_src in extended_pool:
+            if ext_src.source_id in used_ids:
+                continue
+            if ext_src.stance_hint != required_stance:
+                continue
+
+            child_tokens = _ext_tokenize((ext_src.snippet or "") + " " + ext_src.title)
+            sim = _ext_jaccard(parent_tokens, child_tokens)
+            if sim < EXTENDED_NODE_JACCARD_THRESHOLD:
+                continue
+
+            # Small bonus for same source_type (encourages topical coherence)
+            type_bonus = 0.08 if ext_src.source_type == t1_source.source_type else 0.0
+            candidates.append((sim + type_bonus, ext_src))
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+
+        for child_rank, (_, child_src) in enumerate(candidates[:EXTENDED_NODES_PER_PARENT], start=1):
+            used_ids.add(child_src.source_id)
+
+            node_id = f"node_ext_{i:02d}_{child_rank}"
+            child_verdict = _NODE_TYPE_TO_VERDICT.get(t1_node.node_type, "insufficient")
+            edge_conf = confidence_svc.compute_edge_confidence(child_src, llm_class, None)
+
+            results.append((
+                Node(
+                    node_id=node_id,
+                    node_type=t1_node.node_type,
+                    text=child_src.snippet or child_src.title,
+                    verdict=child_verdict,
+                    confidence=round(edge_conf, 3),
+                    size=NODE_SIZE_EXTENDED_EVIDENCE,
+                    color=_NODE_TYPE_TO_COLOR.get(t1_node.node_type, NODE_COLOR_INSUFFICIENT),
+                    best_source_url=str(child_src.url),
+                    top_sources=[child_src],
+                    short_explanation=f"Additional {child_src.source_type} source corroborating this evidence node.",
+                    source_count=1,
+                    is_main_claim=False,
+                ),
+                t1_node.node_id,
+            ))
+
+    return results
