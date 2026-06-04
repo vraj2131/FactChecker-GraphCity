@@ -296,16 +296,26 @@ class LLMModel:
 # ---------------------------------------------------------------------------
 
 
-def _llm_cache_key(model_name: str, claim: str, sources: List[Source]) -> str:
-    """Stable cache key: model + claim + source content fingerprint + prompt version."""
+def _llm_cache_key(
+    model_name: str,
+    claim: str,
+    sources: List[Source],
+    context_claims: Optional[List] = None,
+) -> str:
+    """Stable cache key: model + claim + source fingerprint + context fingerprint + prompt version."""
     source_fingerprint = stable_hash_object([
         {"id": s.source_id, "snippet": s.snippet or "", "stance_hint": s.stance_hint or ""}
         for s in sources
+    ])
+    context_fingerprint = stable_hash_object([
+        {"claim": c.claim_text, "verdict": c.verdict}
+        for c in (context_claims or [])
     ])
     return build_cache_key(
         source_name=model_name,
         query=claim,
         source_fingerprint=source_fingerprint,
+        context_fingerprint=context_fingerprint,
         prompt_version=LLM_PROMPT_VERSION,
     )
 
@@ -513,14 +523,21 @@ class GroqLLMModel:
         self._cache = CacheService(_CACHE_BASE)
         self._cache_namespace = GROQ_CACHE_NAMESPACE
 
-    def classify(self, claim: str, sources: List[Source], use_cache: bool = True) -> LLMResult:
+    def classify(
+        self,
+        claim: str,
+        sources: List[Source],
+        use_cache: bool = True,
+        context_claims: Optional[List] = None,
+    ) -> LLMResult:
         """
         Classify sources against a claim using the Groq API.
 
         Same signature and return type as LLMModel.classify().
 
         Args:
-            use_cache: If True, check file cache before hitting the API and save the result.
+            use_cache:      If True, check file cache before hitting the API and save the result.
+            context_claims: Optional list of ContextClaim objects from prior verifications.
         """
         if not claim or not claim.strip():
             raise ValueError("claim cannot be empty.")
@@ -528,15 +545,14 @@ class GroqLLMModel:
             raise ValueError("sources cannot be empty.")
 
         # --- Cache lookup ---
-        cache_key = _llm_cache_key(self.model_name, claim, sources)
+        cache_key = _llm_cache_key(self.model_name, claim, sources, context_claims)
         if use_cache:
             cached = self._cache.load(self._cache_namespace, cache_key)
             if cached is not None:
                 logger.info("GroqLLMModel: cache hit for claim='%s'", claim[:60])
                 return _deserialize_llm_result(cached)
 
-        # Reuse the same user message builder from LLMModel (via a shared helper)
-        user_message = _build_user_message(claim, sources)
+        user_message = _build_user_message(claim, sources, context_claims)
 
         # First attempt
         raw_output = self._call_api(user_message)
@@ -588,12 +604,32 @@ class GroqLLMModel:
 _SNIPPET_MAX_CHARS = 300   # ~75 tokens per source — keeps 20 sources under 6000 TPM
 
 
-def _build_user_message(claim: str, sources: List[Source]) -> str:
+def _build_user_message(
+    claim: str,
+    sources: List[Source],
+    context_claims: Optional[List] = None,
+) -> str:
     """Shared user message builder (used by both LLMModel and GroqLLMModel)."""
-    lines = [f"CLAIM: {claim}", "", "SOURCES:"]
+    lines = []
+
+    # Prior context section — injected before the claim when history exists
+    if context_claims:
+        lines.append("PRIOR VERIFICATION CONTEXT (supplementary — do not override current evidence):")
+        for i, ctx in enumerate(context_claims, start=1):
+            conf_pct = round(ctx.confidence * 100)
+            verdict_label = ctx.verdict.upper().replace("_", " ")
+            lines.append(f"[{i}] Claim: \"{ctx.claim_text}\"")
+            lines.append(f"    Verdict: {verdict_label} ({conf_pct}% confidence)")
+            if ctx.top_snippets:
+                snippets_str = " | ".join(
+                    s[:120] for s in ctx.top_snippets[:3] if s
+                )
+                lines.append(f"    Key evidence: {snippets_str}")
+        lines.append("")
+
+    lines += [f"CLAIM: {claim}", "", "SOURCES:"]
     for i, source in enumerate(sources, start=1):
         raw_snippet = (source.snippet or "").strip() or "[no snippet]"
-        # Truncate long snippets — enough context for classification without blowing token budget
         snippet = raw_snippet[:_SNIPPET_MAX_CHARS] + ("…" if len(raw_snippet) > _SNIPPET_MAX_CHARS else "")
         nli_hint = source.stance_hint or "none"
         lines.append(

@@ -11,7 +11,7 @@ to build the GraphResponse.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from backend.app.models.llm_model import LLMResult, GroqLLMModel, get_groq_llm_model
 from backend.app.models.nli_model import NLIModel, NLIResult
@@ -79,7 +79,7 @@ class VerifyClaimService:
         self._llm_input_sources = llm_input_sources
         self._context_expansion = context_expansion_svc
 
-    def verify(self, claim_text: str, use_cache: bool = True) -> VerifyClaimResult:
+    def verify(self, claim_text: str, use_cache: bool = True, context_claims: Optional[List] = None) -> VerifyClaimResult:
         """
         Run the full pipeline for a single claim.
 
@@ -162,7 +162,7 @@ class VerifyClaimService:
 
         # 3. LLM classification (top N sources only)
         llm_input = classified_sources[: self._llm_input_sources]
-        llm_result = self._llm.classify(claim_text, llm_input, use_cache=use_cache)
+        llm_result = self._llm.classify(claim_text, llm_input, use_cache=use_cache, context_claims=context_claims)
         logger.info(
             "VerifyClaimService: LLM verdict=%s conf=%.2f",
             llm_result.overall_verdict,

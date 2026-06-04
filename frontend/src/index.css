@@ -167,6 +167,72 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   font-size: 11px;
   letter-spacing: 0;
 }
+/* ── Context Chain Banner (Feature 5) ───────────────────────────────────── */
+.context-chain-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  pointer-events: all;
+  flex-wrap: wrap;
+  max-width: 700px;
+  align-self: center;
+}
+.context-chain-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.context-chain-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.context-chain-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  border: 1px solid;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: default;
+}
+.context-chain-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.context-chain-conf {
+  opacity: 0.6;
+  font-size: 10px;
+}
+.context-chain-clear {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.context-chain-clear:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+}
+
 .claim-preview {
   font-size: 12px;
   color: var(--text-secondary);

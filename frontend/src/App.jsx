@@ -7,6 +7,7 @@ import ClaimInputPanel from './components/ClaimInputPanel';
 import InfoTabsPanel from './components/InfoTabsPanel';
 import FilterPanel from './components/FilterPanel';
 import LandingPage from './components/LandingPage';
+import ContextChainBanner from './components/ContextChainBanner';
 import { VERDICT_CONFIG } from './utils/colorMap';
 import { verifyClaim } from './api/client';
 import { GitBranch, Cpu, Layers, X, Camera } from 'lucide-react';
@@ -19,6 +20,7 @@ export default function App() {
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState(null);
   const [filterVerdict, setFilter]  = useState(null);
+  const [verificationHistory, setVerificationHistory] = useState([]);  // Feature 5
 
   const graphCanvasRef = useRef(null);
   const handleSnapshot = useCallback(() => graphCanvasRef.current?.snapshot(), []);
@@ -39,20 +41,39 @@ export default function App() {
     setSelectedNode(null);
     setFilter(null);
     try {
-      const graph = await verifyClaim(claimText);
+      const graph = await verifyClaim(claimText, verificationHistory);
       setGraphData(graph);
+
+      // Build history entry from top evidence nodes (Feature 5)
+      const topSnippets = (graph.nodes || [])
+        .filter(n => !n.is_main_claim && n.top_sources?.length > 0)
+        .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+        .slice(0, 3)
+        .flatMap(n => n.top_sources?.slice(0, 1).map(s => s.snippet || '') || [])
+        .filter(Boolean);
+
+      setVerificationHistory(prev => [
+        ...prev.slice(-2),
+        {
+          claim_text: claimText,
+          verdict: graph.metadata.overall_verdict,
+          confidence: graph.metadata.overall_confidence,
+          top_snippets: topSnippets.slice(0, 3),
+        },
+      ]);
     } catch (err) {
       setError(err.message ?? 'Pipeline error — check backend logs.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [verificationHistory]);
 
   const handleClear = useCallback(() => {
     setGraphData(null);
     setSelectedNode(null);
     setFilter(null);
     setError(null);
+    setVerificationHistory([]);
   }, []);
 
   // ── Landing page (no result yet) ────────────────────────────────────────
@@ -153,6 +174,14 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {/* Context chain banner — shows prior claims in the chain */}
+        {verificationHistory.length > 0 && (
+          <ContextChainBanner
+            history={verificationHistory}
+            onClear={() => setVerificationHistory([])}
+          />
+        )}
 
         {/* Error toast */}
         {error && (

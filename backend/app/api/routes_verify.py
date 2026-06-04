@@ -67,7 +67,7 @@ async def verify_claim(
     t0 = time.perf_counter()
 
     try:
-        result = verify_svc.verify(claim, use_cache=True)
+        result = verify_svc.verify(claim, use_cache=True, context_claims=request.context_claims or [])
     except Exception as exc:
         logger.exception("VerifyClaimService.verify() failed for claim='%s'", claim[:80])
         raise HTTPException(

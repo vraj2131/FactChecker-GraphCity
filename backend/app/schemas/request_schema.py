@@ -1,6 +1,14 @@
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
+
+
+class ContextClaim(BaseModel):
+    """A previously verified claim passed as context to the LLM."""
+    claim_text: str
+    verdict: str          # verified / rejected / not_enough_info
+    confidence: float
+    top_snippets: List[str] = []   # up to 3 key evidence snippets
 
 
 class VerifyClaimRequest(BaseModel):
@@ -38,6 +46,11 @@ class VerifyClaimRequest(BaseModel):
         ge=1,
         le=5,
         description="Maximum number of sources to attach to each node."
+    )
+
+    context_claims: List[ContextClaim] = Field(
+        default_factory=list,
+        description="Previously verified claims to use as context for LLM reasoning."
     )
 
     @field_validator("claim_text")

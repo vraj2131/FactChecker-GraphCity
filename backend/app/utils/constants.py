@@ -237,7 +237,7 @@ LLM_MAX_NEW_TOKENS = 4096
 LLM_CACHE_NAMESPACE = "llm_outputs"
 
 # Prompt version — bump this to bust the LLM cache when the prompt changes
-LLM_PROMPT_VERSION = "v3"
+LLM_PROMPT_VERSION = "v4"
 
 # Max sources shown to the LLM — 20 keeps request under Groq free-tier 6000 TPM limit
 LLM_MAX_INPUT_SOURCES = 20
