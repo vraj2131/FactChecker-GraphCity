@@ -11,7 +11,8 @@ from backend.app.utils.constants import (
     DEFAULT_SNIPPET_MAX_CHARS,
     DEFAULT_SNIPPET_MAX_SENTENCES,
     SNIPPET_FALLBACK_TO_TITLE,
-    SNIPPET_MIN_RELEVANCE_SCORE,
+    SNIPPET_MIN_RELEVANCE_SCORE_V2,
+    SNIPPET_MIN_LENGTH,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,11 +57,19 @@ class EvidenceExpansionService:
         for source in sources:
             new_snippet = self._resolve_snippet(claim, source)
 
-            # Relevance filter: drop sources whose snippet does not meet the
-            # minimum claim-term overlap threshold (requires at least 2 key terms)
-            if new_snippet and score_sentence_relevance(claim, new_snippet) < SNIPPET_MIN_RELEVANCE_SCORE:
+            # Length gate: drop title-only stubs that are too short to be useful
+            if new_snippet and len(new_snippet.strip()) < SNIPPET_MIN_LENGTH:
                 logger.debug(
-                    "Dropping zero-relevance source source_id=%s", source.source_id
+                    "Dropping short-snippet source source_id=%s (len=%d)",
+                    source.source_id, len(new_snippet.strip()),
+                )
+                dropped += 1
+                continue
+
+            # Relevance filter: raised threshold requires stronger claim-term overlap
+            if new_snippet and score_sentence_relevance(claim, new_snippet) < SNIPPET_MIN_RELEVANCE_SCORE_V2:
+                logger.debug(
+                    "Dropping low-relevance source source_id=%s", source.source_id
                 )
                 dropped += 1
                 continue

@@ -30,6 +30,7 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
   }, [isNodeSelected]);
   const orbitRef = useRef(null);
   const orbitAngle = useRef(0);
+  const startOrbitFn = useRef(null);  // set by scene useEffect, called by onEngineStop
 
   // Convert backend JSON → force-graph format
   const graphData = useMemo(() => transformToForceGraph(graphJson), [graphJson]);
@@ -97,12 +98,9 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
     });
     scene.add(new THREE.Points(starGeo, starMat));
 
-    // ── Initial camera position ─────────────────────────────────────────────
-    graph.cameraPosition({ x: 0, y: 60, z: 220 }, { x: 0, y: 0, z: 0 }, 1200);
-
     // ── Slow auto-orbit ────────────────────────────────────────────────────
-    const ORBIT_R = 220;
-    const ORBIT_Y = 45;
+    let ORBIT_R = 220;
+    let ORBIT_Y = 45;
     let lastTime = Date.now();
 
     const orbit = () => {
@@ -110,7 +108,7 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
         const now = Date.now();
         const dt = (now - lastTime) / 1000;
         lastTime = now;
-        orbitAngle.current += dt * 0.08; // radians per second
+        orbitAngle.current += dt * 0.08;
         const a = orbitAngle.current;
         graph.cameraPosition({
           x: ORBIT_R * Math.sin(a),
@@ -122,13 +120,22 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
       }
       orbitRef.current = requestAnimationFrame(orbit);
     };
-    // Start orbit after initial zoom completes
-    const startTimer = setTimeout(() => {
-      orbitRef.current = requestAnimationFrame(orbit);
-    }, 1800);
+
+    // Exposed to onEngineStop: zoom-to-fit then orbit at the fitted distance
+    startOrbitFn.current = () => {
+      graph.zoomToFit(700, 80);
+      setTimeout(() => {
+        const cam = graph.camera();
+        if (cam) {
+          ORBIT_R = Math.max(cam.position.length(), 80);
+          ORBIT_Y = cam.position.y;
+        }
+        orbitRef.current = requestAnimationFrame(orbit);
+      }, 800);
+    };
 
     return () => {
-      clearTimeout(startTimer);
+      startOrbitFn.current = null;
       if (orbitRef.current) cancelAnimationFrame(orbitRef.current);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,6 +296,14 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
     onNodeSelect?.(null);
   }, [onNodeSelect]);
 
+  // ── Engine stop → zoom to fit + start orbit ───────────────────────────────
+  const handleEngineStop = useCallback(() => {
+    if (startOrbitFn.current) {
+      startOrbitFn.current();
+      startOrbitFn.current = null; // fire once per graph load
+    }
+  }, []);
+
   // ── Snapshot ─────────────────────────────────────────────────────────────
   // Force-render one frame then read the canvas. preserveDrawingBuffer keeps
   // the WebGL buffer alive so toBlob() reads actual content, not a cleared buffer.
@@ -358,6 +373,7 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
         cooldownTicks={120}
         // Animation
         onRenderFramePre={handleRenderFrame}
+        onEngineStop={handleEngineStop}
         // Snapshot — buffer must persist across frames
         preserveDrawingBuffer={true}
         // Controls

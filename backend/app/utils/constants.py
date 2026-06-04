@@ -204,6 +204,10 @@ NLI_CONFIRM_MODEL_NAME = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
 # Requires at least 2 meaningful claim terms to overlap (single-term matches score ~0.06).
 SNIPPET_MIN_RELEVANCE_SCORE = 0.08
 
+# Feature 4: raised relevance floor + minimum snippet length gate
+SNIPPET_MIN_RELEVANCE_SCORE_V2 = 0.12
+SNIPPET_MIN_LENGTH = 50
+
 # -------------------------------------------------------------------
 # Phase 8: LLM
 # -------------------------------------------------------------------

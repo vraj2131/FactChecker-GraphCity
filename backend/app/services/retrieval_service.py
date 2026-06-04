@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from backend.app.preprocessing.deduplicate import deduplicate_sources
@@ -26,6 +27,22 @@ _ADVERSARIAL_RETRIEVER_SOURCES = {"factcheck", "guardian", "gdelt"}
 # Max results fetched per adversarial query per retriever (kept low to avoid flooding)
 _ADVERSARIAL_MAX_RESULTS = 3
 
+# Feature 4a: query decomposition — long claims only
+_DECOMP_MIN_WORDS = 8
+_DECOMP_MAX_RESULTS = 3
+_DECOMP_RETRIEVER_SOURCES = {"guardian", "newsapi", "livewiki", "duckduckgo"}
+_STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "of", "in", "on", "at", "to", "for", "from", "by", "with", "as",
+    "and", "or", "but", "that", "this", "it", "its", "not", "no",
+}
+
+# Feature 4b: date-weighted re-ranking
+_DATE_RECENT_DAYS = 90
+_DATE_OLD_DAYS = 730   # 2 years
+_DATE_RECENT_BONUS = 0.05
+_DATE_OLD_PENALTY = 0.05
+
 
 def _adversarial_queries(claim: str) -> List[str]:
     """
@@ -39,6 +56,99 @@ def _adversarial_queries(claim: str) -> List[str]:
         f"{base} myth debunked",
         f"{base} false",
     ]
+
+
+def _decompose_query(claim: str) -> List[str]:
+    """
+    For claims longer than _DECOMP_MIN_WORDS, produce up to 2 entity-focused
+    sub-queries by extracting proper nouns, numbers, and content words.
+    Returns [] for short claims.
+    """
+    words = claim.strip().rstrip(".").split()
+    if len(words) <= _DECOMP_MIN_WORDS:
+        return []
+
+    # Prefer proper nouns (capitalized mid-sentence) and tokens with digits
+    entities = [
+        w.strip(".,!?;:\"'()[]")
+        for i, w in enumerate(words)
+        if (i > 0 and w[:1].isupper()) or any(c.isdigit() for c in w)
+    ]
+
+    # Fall back to content words if not enough proper nouns
+    if len(entities) < 3:
+        entities = [
+            w.strip(".,!?;:\"'()[]")
+            for w in words
+            if w.lower().strip(".,!?") not in _STOPWORDS and len(w) > 3
+        ]
+
+    entities = [e for e in entities if e]
+    if not entities:
+        return []
+
+    sub_queries: List[str] = [" ".join(entities[:3])]
+    if len(entities) >= 4:
+        sub_queries.append(" ".join(entities[-3:]))
+
+    return sub_queries[:2]
+
+
+def _parse_date(date_str: str) -> datetime | None:
+    """Parse a published_at string into a timezone-aware datetime, or None on failure."""
+    if not date_str:
+        return None
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%d",
+        "%Y%m%dT%H%M%SZ",
+        "%Y%m%d",
+    ):
+        try:
+            dt = datetime.strptime(date_str[:len(fmt) + 5].strip(), fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    return None
+
+
+def _apply_date_weighting(sources: List[Source]) -> List[Source]:
+    """
+    Adjust trust_score based on publication recency before ranking:
+      - Published within 90 days  → +0.05
+      - Published 2+ years ago    → -0.05
+    Sources without a parseable date are unchanged.
+    """
+    now = datetime.now(timezone.utc)
+    result: List[Source] = []
+    boosted = penalised = 0
+    for source in sources:
+        delta = 0.0
+        if source.published_at:
+            pub = _parse_date(str(source.published_at))
+            if pub is not None:
+                age_days = (now - pub).days
+                if age_days <= _DATE_RECENT_DAYS:
+                    delta = _DATE_RECENT_BONUS
+                    boosted += 1
+                elif age_days >= _DATE_OLD_DAYS:
+                    delta = -_DATE_OLD_PENALTY
+                    penalised += 1
+
+        if delta != 0.0:
+            new_trust = max(0.0, min(1.0, source.trust_score + delta))
+            result.append(source.model_copy(update={"trust_score": new_trust}))
+        else:
+            result.append(source)
+
+    logger.info(
+        "Date weighting: %d boosted (≤90d), %d penalised (≥2yr), %d unchanged",
+        boosted, penalised, len(sources) - boosted - penalised,
+    )
+    return result
 
 
 def _apply_source_diversity(sources: List[Source], max_per_type: int) -> List[Source]:
@@ -236,6 +346,32 @@ class RetrievalService:
                             exc,
                         )
 
+        # --- Sub-query decomposition for long claims (Feature 4a) ---
+        if expand_queries:
+            sub_queries = _decompose_query(normalized_query)
+            decomp_sources = [
+                s for s in available_sources
+                if s in _DECOMP_RETRIEVER_SOURCES and self._registry.is_registered(s)
+            ]
+            for sub_query in sub_queries:
+                for source_name in decomp_sources:
+                    try:
+                        retriever = self._registry.get(source_name)
+                        sub_results = retriever.retrieve(
+                            query=sub_query,
+                            max_results=_DECOMP_MAX_RESULTS,
+                        )
+                        all_results.extend(sub_results)
+                        logger.info(
+                            "Sub-query '%s' via '%s': %d results",
+                            sub_query[:60], source_name, len(sub_results),
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Sub-query retriever '%s' failed for query='%s': %s",
+                            source_name, sub_query[:60], exc,
+                        )
+
         logger.info(
             "Raw results before dedup/rank: %d | per-source: %s",
             len(all_results),
@@ -250,8 +386,11 @@ class RetrievalService:
             len(all_results) - len(deduped),
         )
 
+        # --- Date-weighted trust adjustment before ranking (Feature 4b) ---
+        date_weighted = _apply_date_weighting(deduped)
+
         # --- Rank ---
-        ranked = self._ranking.rank(deduped)
+        ranked = self._ranking.rank(date_weighted)
 
         # --- Enforce source diversity (cap per source type) ---
         diverse = _apply_source_diversity(ranked, MAX_RESULTS_PER_SOURCE_TYPE)
