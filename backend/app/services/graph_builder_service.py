@@ -116,6 +116,12 @@ class GraphBuilderService:
 
         retrieval_note = _build_retrieval_note(result)
 
+        retrieval_source_counts: dict = {}
+        for src in result.sources:
+            retrieval_source_counts[src.source_type] = (
+                retrieval_source_counts.get(src.source_type, 0) + 1
+            )
+
         metadata = GraphMetadata(
             claim_text=result.claim_text,
             overall_verdict=conf.overall_verdict,
@@ -130,6 +136,7 @@ class GraphBuilderService:
             top_support_score=round(top_support, 3) if top_support is not None else None,
             top_refute_score=round(top_refute, 3) if top_refute is not None else None,
             retrieval_notes=retrieval_note,
+            retrieval_source_counts=retrieval_source_counts,
         )
 
         graph = GraphResponse(metadata=metadata, nodes=all_nodes, edges=edges)

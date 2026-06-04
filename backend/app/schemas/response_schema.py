@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -91,6 +91,11 @@ class GraphMetadata(BaseModel):
         default=None,
         max_length=1000,
         description="Optional notes about retrieval conditions or limitations."
+    )
+
+    retrieval_source_counts: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Raw retrieval counts per source_type before LLM filtering."
     )
 
     @field_validator("claim_text", "overall_verdict", "retrieval_notes", mode="before")

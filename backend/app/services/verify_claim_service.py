@@ -209,6 +209,7 @@ class VerifyClaimService:
             use_nli_cascade:  If True, run a second stronger NLI model on
                               borderline supports/refutes classifications.
         """
+        from backend.app.retrieval.duckduckgo_retriever import DuckDuckGoRetriever
         from backend.app.retrieval.factcheck_retriever import FactCheckRetriever
         from backend.app.retrieval.gdelt_retriever import GDELTRetriever as GdeltRetriever
         from backend.app.retrieval.guardian_retriever import GuardianRetriever
@@ -223,6 +224,7 @@ class VerifyClaimService:
         registry.register(GuardianRetriever())
         registry.register(NewsApiRetriever())
         registry.register(GdeltRetriever())
+        registry.register(DuckDuckGoRetriever())
 
         cache = CacheService(cache_dir)
         retrieval_svc = RetrievalService(

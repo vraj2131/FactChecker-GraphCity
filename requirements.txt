@@ -35,6 +35,7 @@ tqdm
 requests
 httpx
 groq
+ddgs
 
 # =========================
 # Caching / Serialization

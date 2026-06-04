@@ -106,6 +106,7 @@ SOURCE_NAME_GUARDIAN = "guardian"
 SOURCE_NAME_NEWSAPI = "newsapi"
 SOURCE_NAME_GDELT = "gdelt"
 SOURCE_NAME_LIVEWIKI = "livewiki"
+SOURCE_NAME_DUCKDUCKGO = "duckduckgo"
 
 SUPPORTED_RETRIEVER_SOURCES = [
     SOURCE_NAME_WIKIPEDIA,
@@ -114,6 +115,7 @@ SUPPORTED_RETRIEVER_SOURCES = [
     SOURCE_NAME_NEWSAPI,
     SOURCE_NAME_GDELT,
     SOURCE_NAME_LIVEWIKI,
+    SOURCE_NAME_DUCKDUCKGO,
 ]
 
 # -------------------------------------------------------------------
@@ -161,6 +163,7 @@ SOURCE_TYPE_PRIORITY: dict = {
     "livewiki": 0.65,
     "newsapi": 0.6,
     "wikipedia": 0.5,
+    "duckduckgo": 0.60,
     "gdelt": 0.3,
 }
 SOURCE_TYPE_PRIORITY_DEFAULT = 0.1

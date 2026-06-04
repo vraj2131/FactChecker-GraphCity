@@ -9,24 +9,32 @@ import {
 
 // All available retriever sources in the pipeline (fixed list)
 const ALL_RETRIEVERS = [
-  { key: 'wikipedia', label: 'Wikipedia',    desc: 'FEVER offline FAISS index — encyclopaedic facts' },
-  { key: 'livewiki',  label: 'Live Wiki',     desc: 'Live Wikipedia API — real-time article lookup' },
-  { key: 'factcheck', label: 'Fact Check',   desc: 'Google Fact Check API — professional debunks' },
-  { key: 'guardian',  label: 'The Guardian', desc: 'Guardian news API — trusted journalism' },
-  { key: 'newsapi',   label: 'NewsAPI',      desc: 'Aggregated news — broad current coverage' },
-  { key: 'gdelt',     label: 'GDELT',        desc: 'Global event database — broad geopolitical signals' },
+  { key: 'wikipedia',  label: 'Wikipedia',    desc: 'FEVER offline FAISS index — encyclopaedic facts' },
+  { key: 'livewiki',   label: 'Live Wiki',     desc: 'Live Wikipedia API — real-time article lookup' },
+  { key: 'factcheck',  label: 'Fact Check',   desc: 'Google Fact Check API — professional debunks' },
+  { key: 'guardian',   label: 'The Guardian', desc: 'Guardian news API — trusted journalism' },
+  { key: 'newsapi',    label: 'NewsAPI',       desc: 'Aggregated news — broad current coverage' },
+  { key: 'gdelt',      label: 'GDELT',         desc: 'Global event database — broad geopolitical signals' },
+  { key: 'duckduckgo', label: 'DuckDuckGo',   desc: 'General web search — broad real-time coverage' },
 ];
 
 // ── Sources tab ──────────────────────────────────────────────────────────────
 
 function SourcesTab({ graphJson }) {
-  // Count how many results each source_type contributed to this graph
-  const counts = {};
-  for (const node of graphJson.nodes) {
-    for (const src of node.top_sources ?? []) {
-      counts[src.source_type] = (counts[src.source_type] ?? 0) + 1;
-    }
-  }
+  // Use raw retrieval counts from metadata when available (includes sources
+  // filtered out before LLM classification, e.g. DuckDuckGo).
+  // Fall back to counting from node top_sources for older responses.
+  const counts = graphJson.metadata?.retrieval_source_counts
+    ? { ...graphJson.metadata.retrieval_source_counts }
+    : (() => {
+        const c = {};
+        for (const node of graphJson.nodes) {
+          for (const src of node.top_sources ?? []) {
+            c[src.source_type] = (c[src.source_type] ?? 0) + 1;
+          }
+        }
+        return c;
+      })();
 
   const totalResults = Object.values(counts).reduce((s, v) => s + v, 0);
 

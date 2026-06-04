@@ -88,23 +88,25 @@ export const VERDICT_CONFIG = {
 };
 
 export const SOURCE_TYPE_LABELS = {
-  wikipedia: 'Wikipedia',
-  livewiki:  'Live Wiki',
-  factcheck: 'FactCheck',
-  guardian:  'The Guardian',
-  newsapi:   'NewsAPI',
-  gdelt:     'GDELT',
-  other:     'Other',
+  wikipedia:  'Wikipedia',
+  livewiki:   'Live Wiki',
+  factcheck:  'FactCheck',
+  guardian:   'The Guardian',
+  newsapi:    'NewsAPI',
+  gdelt:      'GDELT',
+  duckduckgo: 'DuckDuckGo',
+  other:      'Other',
 };
 
 export const SOURCE_TYPE_COLORS = {
-  wikipedia: '#94a3b8',
-  livewiki:  '#38bdf8',
-  factcheck: '#c084fc',
-  guardian:  '#34d399',
-  newsapi:   '#fb923c',
-  gdelt:     '#facc15',
-  other:     '#64748b',
+  wikipedia:  '#94a3b8',
+  livewiki:   '#38bdf8',
+  factcheck:  '#c084fc',
+  guardian:   '#34d399',
+  newsapi:    '#fb923c',
+  gdelt:      '#facc15',
+  duckduckgo: '#de5833',
+  other:      '#64748b',
 };
 
 /** Return the correct color for a node based on type + verdict. */
