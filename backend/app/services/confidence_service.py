@@ -12,7 +12,7 @@ Two public methods:
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from backend.app.models.calibration_model import calibrate
 from backend.app.models.llm_model import LLMResult
@@ -99,9 +99,25 @@ class ConfidenceService:
         direct_support_indices: List[int] = []
         direct_refute_indices: List[int] = []
         correlated_indices: List[int] = []
+        anchored_indices: Set[int] = set()
 
         for i in range(len(sources)):
             llm_class = class_by_idx.get(i + 1, "insufficient")  # 1-indexed
+
+            # Fact-check sources are retrieved specifically because they
+            # address the claim. If the LLM reached a supported/refuted
+            # verdict but didn't classify this source as direct_support /
+            # direct_refute (small models are inconsistent here), anchor it
+            # to the verdict direction so it isn't lost as "insufficient" /
+            # "correlated_context".
+            if (
+                sources[i].source_type == "factcheck"
+                and llm_class not in ("direct_support", "direct_refute")
+                and verdict in ("supported", "refuted")
+            ):
+                llm_class = "direct_support" if verdict == "supported" else "direct_refute"
+                anchored_indices.add(i)
+
             if llm_class == "direct_support":
                 direct_support_indices.append(i)
             elif llm_class == "direct_refute":
@@ -110,11 +126,18 @@ class ConfidenceService:
                 correlated_indices.append(i)
 
         # --- 1. Directional score (only direct sources) ---
+        # When an anchored fact-check source's NLI label doesn't match the
+        # expected direction, fall back to the LLM's own overall confidence
+        # in the verdict — it already read the snippet holistically, even
+        # if its per-source bucketing was inconsistent.
+        anchor_fallback_conf = max(0.5, min(1.0, llm_result.confidence))
         support_score = self._weighted_nli_avg(
-            direct_support_indices, sources, nli_results
+            direct_support_indices, sources, nli_results, "supports",
+            anchored_indices, anchor_fallback_conf,
         )
         refute_score = self._weighted_nli_avg(
-            direct_refute_indices, sources, nli_results
+            direct_refute_indices, sources, nli_results, "refutes",
+            anchored_indices, anchor_fallback_conf,
         )
 
         if verdict == "supported":
@@ -255,22 +278,35 @@ class ConfidenceService:
         indices: List[int],
         sources: List[Source],
         nli_results: Dict[int, NLIResult],
+        expected_label: Optional[str] = None,
+        anchored_indices: Optional[Set[int]] = None,
+        anchor_fallback_conf: float = 0.5,
     ) -> float:
         """
         Weighted average of NLI confidence over a set of source indices.
 
         Weight per source = trust_score × relevance_score.
         Falls back to 0.5 confidence for sources without NLI results.
+
+        For sources anchored to a verdict direction, the NLI confidence is
+        only trusted if its label agrees with `expected_label` — otherwise
+        the NLI score reflects a different (often "not_enough_info") stance
+        and would misrepresent this source's contribution to the directional
+        score, so `anchor_fallback_conf` is used instead.
         """
         if not indices:
             return 0.0
 
+        anchored_indices = anchored_indices or set()
         total_weight = 0.0
         weighted_sum = 0.0
 
         for i in indices:
             nli = nli_results.get(i)
-            conf = nli.confidence if nli else 0.5
+            if i in anchored_indices and (nli is None or nli.label != expected_label):
+                conf = anchor_fallback_conf
+            else:
+                conf = nli.confidence if nli else 0.5
             w = sources[i].trust_score * sources[i].relevance_score
             w = max(w, 0.01)  # floor so zero-relevance sources still contribute
             weighted_sum += conf * w

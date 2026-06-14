@@ -54,6 +54,9 @@ IMPORTANT:
 - Base ALL classifications solely on the snippet text provided.
 - Output ONLY valid JSON — no explanation text outside the JSON.
 - A fact-check article that DEBUNKS a claim is direct_refute (the debunker refutes the claim).
+- A snippet whose subject is a person/group who BELIEVES, CLAIMS, or is TRYING TO PROVE the claim
+  (e.g. a conspiracy theorist) is correlated_context, NOT direct_support — believing or arguing
+  something does not make it true, even if the snippet repeats the claim's exact wording.
 - node_links must use source index numbers (1-based). Only include pairs where a clear relationship exists.
   If no inter-source relationships are apparent, output "node_links": [].
 
