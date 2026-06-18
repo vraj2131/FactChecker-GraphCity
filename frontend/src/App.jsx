@@ -214,6 +214,7 @@ export default function App() {
               node={selectedNode}
               graphJson={graphData}
               onClose={handlePanelClose}
+              onVerify={handleVerify}
             />
           </div>
         </div>

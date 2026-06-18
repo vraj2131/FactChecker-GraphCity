@@ -1,4 +1,4 @@
-import { X, ExternalLink, Shield, Zap, BarChart3, Globe, MousePointer, Network } from 'lucide-react';
+import { X, ExternalLink, Shield, Zap, BarChart3, Globe, MousePointer, Network, Search } from 'lucide-react';
 import GaugePanel from './GaugePanel';
 import {
   NODE_TYPE_LABELS,
@@ -23,7 +23,7 @@ function ConfidenceBar({ value, color }) {
   );
 }
 
-function SourceCard({ source }) {
+function SourceCard({ source, onVerify }) {
   const typeLabel  = SOURCE_TYPE_LABELS[source.source_type] ?? source.source_type;
   const typeColor  = SOURCE_TYPE_COLORS[source.source_type] ?? '#94a3b8';
   const stanceConf = VERDICT_CONFIG[source.stance_hint] ?? VERDICT_CONFIG.neutral;
@@ -72,18 +72,30 @@ function SourceCard({ source }) {
         </div>
       </div>
 
-      {source.url && (
-        <a
-          href={source.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="source-url-btn"
-        >
-          <Globe size={12} />
-          Open Source
-          <ExternalLink size={11} />
-        </a>
-      )}
+      <div className="source-card-actions">
+        {source.url && (
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="source-url-btn"
+          >
+            <Globe size={12} />
+            Open Source
+            <ExternalLink size={11} />
+          </a>
+        )}
+        {onVerify && (source.snippet || source.title) && (
+          <button
+            className="source-verify-btn"
+            onClick={() => onVerify((source.snippet || source.title).slice(0, 200).trim())}
+            title="Re-run fact-check using this source's content as the new claim"
+          >
+            <Search size={12} />
+            Verify as Claim
+          </button>
+        )}
+      </div>
 
       {source.published_at && (
         <span className="source-date">
@@ -310,7 +322,7 @@ function MainClaimPanel({ node, graphJson, onClose }) {
    Evidence node view — full source details
 ───────────────────────────────────────────────────────────────────────── */
 
-function EvidencePanel({ node, onClose }) {
+function EvidencePanel({ node, onClose, onVerify }) {
   const verdict   = VERDICT_CONFIG[node.verdict] ?? VERDICT_CONFIG.neutral;
   const typeLabel = NODE_TYPE_LABELS[node.node_type] ?? node.node_type;
 
@@ -367,7 +379,7 @@ function EvidencePanel({ node, onClose }) {
             </div>
             <div className="sources-list">
               {node.top_sources.map((src) => (
-                <SourceCard key={src.source_id} source={src} />
+                <SourceCard key={src.source_id} source={src} onVerify={onVerify} />
               ))}
             </div>
           </div>
@@ -394,14 +406,14 @@ function EvidencePanel({ node, onClose }) {
    Export
 ───────────────────────────────────────────────────────────────────────── */
 
-export default function SideInfoPanel({ node, graphJson, onClose }) {
+export default function SideInfoPanel({ node, graphJson, onClose, onVerify }) {
   if (!node) return null;
 
   return (
     <aside className="side-panel">
       {node.is_main_claim
         ? <MainClaimPanel node={node} graphJson={graphJson} onClose={onClose} />
-        : <EvidencePanel  node={node} onClose={onClose} />
+        : <EvidencePanel  node={node} onClose={onClose} onVerify={onVerify} />
       }
     </aside>
   );
