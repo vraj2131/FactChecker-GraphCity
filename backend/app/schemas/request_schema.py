@@ -53,6 +53,11 @@ class VerifyClaimRequest(BaseModel):
         description="Previously verified claims to use as context for LLM reasoning."
     )
 
+    include_social: bool = Field(
+        default=False,
+        description="Whether to include Reddit and Bluesky as evidence sources."
+    )
+
     @field_validator("claim_text")
     @classmethod
     def validate_claim_text(cls, value: str) -> str:

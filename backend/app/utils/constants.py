@@ -107,6 +107,8 @@ SOURCE_NAME_NEWSAPI = "newsapi"
 SOURCE_NAME_GDELT = "gdelt"
 SOURCE_NAME_LIVEWIKI = "livewiki"
 SOURCE_NAME_DUCKDUCKGO = "duckduckgo"
+SOURCE_NAME_REDDIT    = "reddit"
+SOURCE_NAME_BLUESKY   = "bluesky"
 
 SUPPORTED_RETRIEVER_SOURCES = [
     SOURCE_NAME_WIKIPEDIA,
@@ -165,6 +167,8 @@ SOURCE_TYPE_PRIORITY: dict = {
     "wikipedia": 0.5,
     "duckduckgo": 0.60,
     "gdelt": 0.3,
+    "reddit": 0.45,
+    "bluesky": 0.35,
 }
 SOURCE_TYPE_PRIORITY_DEFAULT = 0.1
 

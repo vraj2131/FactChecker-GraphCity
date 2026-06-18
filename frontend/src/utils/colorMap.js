@@ -95,6 +95,8 @@ export const SOURCE_TYPE_LABELS = {
   newsapi:    'NewsAPI',
   gdelt:      'GDELT',
   duckduckgo: 'DuckDuckGo',
+  reddit:     'Reddit',
+  bluesky:    'Bluesky',
   other:      'Other',
 };
 
@@ -106,6 +108,8 @@ export const SOURCE_TYPE_COLORS = {
   newsapi:    '#fb923c',
   gdelt:      '#facc15',
   duckduckgo: '#de5833',
+  reddit:     '#FF4500',
+  bluesky:    '#0085FF',
   other:      '#64748b',
 };
 

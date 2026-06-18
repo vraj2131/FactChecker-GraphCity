@@ -21,6 +21,7 @@ export default function App() {
   const [error, setError]           = useState(null);
   const [filterVerdict, setFilter]  = useState(null);
   const [verificationHistory, setVerificationHistory] = useState([]);  // Feature 5
+  const [includeSocial, setIncludeSocial] = useState(false);           // Feature 9
 
   const graphCanvasRef = useRef(null);
   const handleSnapshot = useCallback(() => graphCanvasRef.current?.snapshot(), []);
@@ -41,7 +42,7 @@ export default function App() {
     setSelectedNode(null);
     setFilter(null);
     try {
-      const graph = await verifyClaim(claimText, verificationHistory);
+      const graph = await verifyClaim(claimText, verificationHistory, includeSocial);
       setGraphData(graph);
 
       // Build history entry from top evidence nodes (Feature 5)
@@ -66,7 +67,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [verificationHistory]);
+  }, [verificationHistory, includeSocial]);
 
   const handleClear = useCallback(() => {
     setGraphData(null);
@@ -195,7 +196,12 @@ export default function App() {
         {/* Bottom-left: legend + filter */}
         <div className="legend-anchor">
           <LegendPanel metadata={meta} />
-          <FilterPanel activeFilter={filterVerdict} onFilter={setFilter} />
+          <FilterPanel
+            activeFilter={filterVerdict}
+            onFilter={setFilter}
+            includeSocial={includeSocial}
+            onToggleSocial={() => setIncludeSocial(v => !v)}
+          />
         </div>
 
         {/* Bottom-right: sources + schema tabs */}

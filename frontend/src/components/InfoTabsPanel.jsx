@@ -16,6 +16,8 @@ const ALL_RETRIEVERS = [
   { key: 'newsapi',    label: 'NewsAPI',       desc: 'Aggregated news — broad current coverage' },
   { key: 'gdelt',      label: 'GDELT',         desc: 'Global event database — broad geopolitical signals' },
   { key: 'duckduckgo', label: 'DuckDuckGo',   desc: 'General web search — broad real-time coverage' },
+  { key: 'reddit',     label: 'Reddit',       desc: 'Reddit public posts — community discussion signals' },
+  { key: 'bluesky',    label: 'Bluesky',      desc: 'Bluesky public posts — social media signals' },
 ];
 
 // ── Sources tab ──────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ const FILTERS = [
   { key: 'correlated',  label: 'Context',  color: '#818cf8' },
 ];
 
-export default function FilterPanel({ activeFilter, onFilter }) {
+export default function FilterPanel({ activeFilter, onFilter, includeSocial, onToggleSocial }) {
   return (
     <div className="filter-panel">
       <span className="filter-label">
@@ -31,6 +31,17 @@ export default function FilterPanel({ activeFilter, onFilter }) {
           </button>
         );
       })}
+
+      <div className="social-toggle" title="Include Reddit + Bluesky as evidence sources">
+        <span className="social-toggle-label">Social</span>
+        <button
+          className={`social-toggle-btn ${includeSocial ? 'social-toggle-btn--on' : ''}`}
+          onClick={onToggleSocial}
+          aria-pressed={includeSocial}
+        >
+          <span className="social-toggle-thumb" />
+        </button>
+      </div>
     </div>
   );
 }

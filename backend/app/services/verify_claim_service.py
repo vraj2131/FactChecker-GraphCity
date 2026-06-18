@@ -79,7 +79,7 @@ class VerifyClaimService:
         self._llm_input_sources = llm_input_sources
         self._context_expansion = context_expansion_svc
 
-    def verify(self, claim_text: str, use_cache: bool = True, context_claims: Optional[List] = None) -> VerifyClaimResult:
+    def verify(self, claim_text: str, use_cache: bool = True, context_claims: Optional[List] = None, include_social: bool = False) -> VerifyClaimResult:
         """
         Run the full pipeline for a single claim.
 
@@ -100,6 +100,21 @@ class VerifyClaimService:
             use_cache=use_cache,
         )
         logger.info("VerifyClaimService: retrieved %d direct sources", len(sources))
+
+        # 1a. Social media retrieval (optional, off by default)
+        if include_social:
+            from backend.app.retrieval.reddit_retriever import RedditRetriever
+            from backend.app.retrieval.bluesky_retriever import BlueskyRetriever
+            existing_ids = {s.source_id for s in sources}
+            for retriever in [RedditRetriever(), BlueskyRetriever()]:
+                try:
+                    for src in retriever.retrieve(claim_text, max_results=5):
+                        if src.source_id not in existing_ids:
+                            sources.append(src)
+                            existing_ids.add(src.source_id)
+                except Exception as exc:
+                    logger.warning("Social retriever %s failed: %s", retriever.source_name, exc)
+            logger.info("VerifyClaimService: %d sources after social media retrieval", len(sources))
 
         # 1b. Context expansion — contributing-factor sources (optional)
         if self._context_expansion is not None and CONTEXT_EXPANSION_ENABLED:
