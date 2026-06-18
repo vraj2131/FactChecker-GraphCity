@@ -99,6 +99,12 @@ class Node(BaseModel):
         description="Whether this node is the root/main claim node."
     )
 
+    rank: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Quality rank among evidence nodes (1 = highest quality). None for the main claim node."
+    )
+
     @field_validator(
         "node_id",
         "node_type",

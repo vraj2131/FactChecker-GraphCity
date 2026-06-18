@@ -96,9 +96,31 @@ class GraphBuilderService:
         ext_edges = build_extended_edges(ext_pairs)
 
         edges = main_edges + inter_edges + ext_edges
+
+        # 6. Rank all evidence nodes by quality score (confidence × trust × relevance × type_weight)
+        # Type weight ensures strong evidence (support/refute/factcheck) always outranks
+        # weak evidence (context/insufficient) even when the latter has high individual scores.
+        _TYPE_WEIGHT = {
+            "direct_support":       1.00,
+            "direct_refute":        1.00,
+            "factcheck_review":     0.90,
+            "context_signal":       0.55,
+            "insufficient_evidence": 0.35,
+        }
+        all_evidence = evidence_nodes + ext_nodes
+        def _rank_score(node):
+            src = node.top_sources[0] if node.top_sources else None
+            trust = src.trust_score if src else 0.5
+            relevance = src.relevance_score if src else 0.5
+            type_w = _TYPE_WEIGHT.get(node.node_type, 0.5)
+            return node.confidence * trust * relevance * type_w
+
+        for rank, node in enumerate(sorted(all_evidence, key=_rank_score, reverse=True), start=1):
+            node.rank = rank
+
         all_nodes = [main_node] + evidence_nodes + ext_nodes
 
-        # 6. Metadata — count nodes by type
+        # 7. Metadata — count nodes by type
         support_count  = sum(1 for n in evidence_nodes if n.node_type == "direct_support")
         refute_count   = sum(1 for n in evidence_nodes if n.node_type == "direct_refute")
         insuff_count   = sum(1 for n in evidence_nodes if n.node_type == "insufficient_evidence")

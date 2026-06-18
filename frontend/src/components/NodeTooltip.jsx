@@ -37,6 +37,9 @@ export default function NodeTooltip({ node, pos }) {
             {sourceTypeLabel}
           </span>
         )}
+        {!node.is_main_claim && node.rank && (
+          <span className="tooltip-rank-badge">#{node.rank}</span>
+        )}
       </div>
 
       {/* Title / snippet */}
