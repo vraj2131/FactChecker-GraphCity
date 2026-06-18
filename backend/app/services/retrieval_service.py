@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from backend.app.preprocessing.deduplicate import deduplicate_sources
+from backend.app.preprocessing.entity_extractor import extract_claim_entities, anchor_present
 from backend.app.preprocessing.normalize_text import normalize_claim_text
 from backend.app.retrieval.retriever_registry import RetrieverRegistry
 from backend.app.schemas.source_schema import Source
@@ -386,11 +387,63 @@ class RetrievalService:
             len(all_results) - len(deduped),
         )
 
+        # --- Low-yield fallback: if too few sources, retry with entity-focused query ---
+        _FALLBACK_MIN_SOURCES = 3
+        _FALLBACK_RETRIEVER_SOURCES = {"wikipedia", "livewiki", "duckduckgo"}
+        if len(deduped) < _FALLBACK_MIN_SOURCES:
+            fallback_words = [
+                w.strip(".,!?;:'\"()[]")
+                for w in normalized_query.split()
+                if w.lower().strip(".,!?") not in _STOPWORDS and len(w) > 3
+            ]
+            if fallback_words:
+                fallback_query = " ".join(fallback_words[:5]) + " facts"
+                fb_sources = [
+                    s for s in available_sources
+                    if s in _FALLBACK_RETRIEVER_SOURCES and self._registry.is_registered(s)
+                ]
+                for source_name in fb_sources:
+                    try:
+                        retriever = self._registry.get(source_name)
+                        fb_results = retriever.retrieve(query=fallback_query, max_results=3)
+                        deduped_ids = {s.source_id for s in deduped}
+                        new = [s for s in fb_results if s.source_id not in deduped_ids]
+                        deduped.extend(new)
+                        logger.info(
+                            "Low-yield fallback '%s' via '%s': +%d sources",
+                            fallback_query[:60], source_name, len(new),
+                        )
+                    except Exception as exc:
+                        logger.debug("Fallback retriever '%s' failed: %s", source_name, exc)
+
         # --- Date-weighted trust adjustment before ranking (Feature 4b) ---
         date_weighted = _apply_date_weighting(deduped)
 
-        # --- Rank ---
-        ranked = self._ranking.rank(date_weighted)
+        # --- Rank (with entity-overlap penalty) ---
+        ranked = self._ranking.rank(date_weighted, claim=normalized_query)
+
+        # --- Hard entity filter: remove clearly off-topic sources ---
+        # Sources missing ALL anchor entities from the claim are almost certainly
+        # unrelated. We remove them after ranking so only topically irrelevant
+        # sources are dropped. A floor of 3 prevents over-filtering sparse claims.
+        _HARD_FILTER_MIN = 3
+        anchors, _ = extract_claim_entities(normalized_query)
+        if anchors:
+            filtered = [
+                s for s in ranked
+                if anchor_present(anchors, f"{s.title or ''} {s.snippet or ''}")
+            ]
+            if len(filtered) >= _HARD_FILTER_MIN:
+                logger.info(
+                    "Hard entity filter: removed %d off-topic sources (kept %d, anchors=%s)",
+                    len(ranked) - len(filtered), len(filtered), anchors,
+                )
+                ranked = filtered
+            else:
+                logger.info(
+                    "Hard entity filter skipped: only %d sources would remain (floor=%d)",
+                    len(filtered), _HARD_FILTER_MIN,
+                )
 
         # --- Enforce source diversity (cap per source type) ---
         diverse = _apply_source_diversity(ranked, MAX_RESULTS_PER_SOURCE_TYPE)

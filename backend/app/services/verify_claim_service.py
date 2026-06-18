@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.app.models.llm_model import LLMResult, GroqLLMModel, get_groq_llm_model
 from backend.app.models.nli_model import NLIModel, NLIResult
+from backend.app.preprocessing.entity_extractor import extract_claim_entities, anchor_present
 from backend.app.schemas.source_schema import Source
 from backend.app.services.cache_service import CacheService
 from backend.app.services.confidence_service import ConfidenceOutput, ConfidenceService
@@ -140,6 +141,20 @@ class VerifyClaimService:
                     key=lambda s: s.trust_score * s.relevance_score,
                     reverse=True,
                 )
+                # Re-apply entity filter after context expansion merge —
+                # context sources bypass retrieval_service's hard filter.
+                _anchors, _ = extract_claim_entities(claim_text)
+                if _anchors and len(sources) > 3:
+                    _filtered = [
+                        s for s in sources
+                        if anchor_present(_anchors, f"{s.title or ''} {s.snippet or ''}")
+                    ]
+                    if len(_filtered) >= 3:
+                        logger.info(
+                            "Post-expansion entity filter: removed %d off-topic sources",
+                            len(sources) - len(_filtered),
+                        )
+                        sources = _filtered
 
         if not sources:
             logger.warning("VerifyClaimService: no sources retrieved for claim='%s'", claim_text[:80])
@@ -210,7 +225,7 @@ class VerifyClaimService:
         cls,
         cache_dir: Path = DEFAULT_RETRIEVAL_CACHE_DIR,
         groq_model: str = GROQ_MODEL_NAME,
-        use_nli_cascade: bool = False,
+        use_nli_cascade: bool = True,
     ) -> "VerifyClaimService":
         """
         Build a fully wired VerifyClaimService with default settings.

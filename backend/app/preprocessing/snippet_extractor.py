@@ -245,13 +245,19 @@ def _tokenize(text: str) -> frozenset:
     )
 
 
+def _extract_numbers(text: str) -> frozenset:
+    """Extract digit sequences (numbers, years, percentages) from text."""
+    return frozenset(re.findall(r'\b\d[\d,.%]*\b', text))
+
+
 def score_sentence_relevance(claim: str, sentence: str) -> float:
     """
     Score how relevant a sentence is to a claim.
 
-    Uses claim coverage ratio: fraction of meaningful claim terms found in
-    the sentence. Multi-term matches are required for a useful score —
-    sentences that match only a single claim term are heavily penalized.
+    Uses claim coverage ratio + fact-aware number/date bonus:
+    sentences containing numbers/years from the claim get a +0.2 boost,
+    since claims about facts/statistics are best verified by sentences
+    that share the same numeric values.
 
     Returns a float in [0, 1]. Higher is more relevant.
     Returns 0.0 if either input is empty.
@@ -277,6 +283,14 @@ def score_sentence_relevance(claim: str, sentence: str) -> float:
     # Penalize single-term hits — "Paris" alone is weak evidence
     if n_matched < 2:
         coverage *= 0.3
+
+    # Fact-aware bonus: sentences sharing numbers/years with the claim
+    # are more likely to contain the specific fact being verified
+    claim_numbers = _extract_numbers(claim)
+    if claim_numbers:
+        sentence_numbers = _extract_numbers(sentence)
+        if claim_numbers & sentence_numbers:
+            coverage = min(coverage + 0.2, 1.0)
 
     return min(coverage, 1.0)
 
