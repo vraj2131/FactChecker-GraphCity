@@ -109,6 +109,14 @@ SOURCE_NAME_LIVEWIKI = "livewiki"
 SOURCE_NAME_DUCKDUCKGO = "duckduckgo"
 SOURCE_NAME_REDDIT    = "reddit"
 SOURCE_NAME_BLUESKY   = "bluesky"
+# Feature 11 — domain-specific sources
+SOURCE_NAME_OPENALEX  = "openalex"
+SOURCE_NAME_ARXIV     = "arxiv"
+SOURCE_NAME_PUBMED    = "pubmed"
+SOURCE_NAME_EDGAR     = "sec_edgar"
+SOURCE_NAME_FRED      = "fred"
+SOURCE_NAME_COINGECKO = "coingecko"
+SOURCE_NAME_WORLDBANK = "worldbank"
 
 SUPPORTED_RETRIEVER_SOURCES = [
     SOURCE_NAME_WIKIPEDIA,
@@ -161,14 +169,22 @@ RANKING_WEIGHT_TYPE_PRIORITY = 0.2
 # Source type priority scores (normalized 0–1)
 SOURCE_TYPE_PRIORITY: dict = {
     "factcheck": 1.0,
+    # Feature 11 — domain-specific primary sources (high authority)
+    "pubmed": 0.95,
+    "fred": 0.93,
+    "openalex": 0.92,
+    "sec_edgar": 0.90,
+    "coingecko": 0.88,
+    "worldbank": 0.88,
+    "arxiv": 0.85,
     "guardian": 0.8,
     "livewiki": 0.65,
     "newsapi": 0.6,
-    "wikipedia": 0.5,
     "duckduckgo": 0.60,
-    "gdelt": 0.3,
+    "wikipedia": 0.5,
     "reddit": 0.45,
     "bluesky": 0.35,
+    "gdelt": 0.3,
 }
 SOURCE_TYPE_PRIORITY_DEFAULT = 0.1
 

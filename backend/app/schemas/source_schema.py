@@ -92,7 +92,12 @@ class Source(BaseModel):
     @field_validator("source_type")
     @classmethod
     def validate_source_type(cls, value: Optional[str]) -> str:
-        allowed_types = {"wikipedia", "newsapi", "guardian", "factcheck", "gdelt", "livewiki", "duckduckgo", "reddit", "bluesky", "other"}
+        allowed_types = {
+            "wikipedia", "newsapi", "guardian", "factcheck", "gdelt",
+            "livewiki", "duckduckgo", "reddit", "bluesky", "other",
+            # Feature 11 — domain-specific sources
+            "openalex", "arxiv", "pubmed", "sec_edgar", "fred", "coingecko", "worldbank",
+        }
         if value is None:
             raise ValueError("source_type cannot be empty.")
         lowered = value.lower()

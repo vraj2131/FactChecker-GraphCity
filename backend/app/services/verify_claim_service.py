@@ -117,7 +117,70 @@ class VerifyClaimService:
                     logger.warning("Social retriever %s failed: %s", retriever.source_name, exc)
             logger.info("VerifyClaimService: %d sources after social media retrieval", len(sources))
 
-        # 1b. Context expansion — contributing-factor sources (optional)
+        # 1b. Domain-specific retrieval (Feature 11) — science, health, economics, crypto
+        from backend.app.utils.domain_router import detect_domains
+        domains = detect_domains(claim_text)
+        if domains:
+            _DOMAIN_RETRIEVERS = {
+                "science": ["openalex", "arxiv"],
+                "health": ["pubmed", "openalex"],
+                "economics": ["fred", "worldbank", "sec_edgar"],
+                "crypto": ["coingecko"],
+            }
+            _RETRIEVER_MAP = {
+                "openalex": lambda: __import__(
+                    "backend.app.retrieval.openalex_retriever",
+                    fromlist=["OpenAlexRetriever"],
+                ).OpenAlexRetriever(),
+                "arxiv": lambda: __import__(
+                    "backend.app.retrieval.arxiv_retriever",
+                    fromlist=["ArxivRetriever"],
+                ).ArxivRetriever(),
+                "pubmed": lambda: __import__(
+                    "backend.app.retrieval.pubmed_retriever",
+                    fromlist=["PubMedRetriever"],
+                ).PubMedRetriever(),
+                "sec_edgar": lambda: __import__(
+                    "backend.app.retrieval.sec_edgar_retriever",
+                    fromlist=["SecEdgarRetriever"],
+                ).SecEdgarRetriever(),
+                "fred": lambda: __import__(
+                    "backend.app.retrieval.fred_retriever",
+                    fromlist=["FredRetriever"],
+                ).FredRetriever(),
+                "coingecko": lambda: __import__(
+                    "backend.app.retrieval.coingecko_retriever",
+                    fromlist=["CoinGeckoRetriever"],
+                ).CoinGeckoRetriever(),
+                "worldbank": lambda: __import__(
+                    "backend.app.retrieval.worldbank_retriever",
+                    fromlist=["WorldBankRetriever"],
+                ).WorldBankRetriever(),
+            }
+            existing_ids = {s.source_id for s in sources}
+            seen_domain_retrievers: set = set()
+            for domain in sorted(domains):
+                for retriever_key in _DOMAIN_RETRIEVERS.get(domain, []):
+                    if retriever_key in seen_domain_retrievers:
+                        continue
+                    seen_domain_retrievers.add(retriever_key)
+                    try:
+                        retriever = _RETRIEVER_MAP[retriever_key]()
+                        for src in retriever.retrieve(claim_text, max_results=5):
+                            if src.source_id not in existing_ids:
+                                sources.append(src)
+                                existing_ids.add(src.source_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "Domain retriever %s failed: %s", retriever_key, exc
+                        )
+            logger.info(
+                "VerifyClaimService: %d sources after domain retrieval (domains=%s)",
+                len(sources),
+                domains,
+            )
+
+        # 1c. Context expansion — contributing-factor sources (optional)
         if self._context_expansion is not None and CONTEXT_EXPANSION_ENABLED:
             context_sources = self._context_expansion.retrieve_context_sources(
                 claim_text, self._retrieval, use_cache=use_cache
