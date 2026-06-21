@@ -58,6 +58,15 @@ class VerifyClaimRequest(BaseModel):
         description="Whether to include Reddit and Bluesky as evidence sources."
     )
 
+    enabled_source_groups: List[str] = Field(
+        default=["wikipedia", "live_news", "factcheck", "scientific", "financial"],
+        description=(
+            "Source groups to query. Valid values: wikipedia, live_news, factcheck, "
+            "web_search, scientific, financial, social. "
+            "Defaults to all except web_search (DuckDuckGo) and social (Reddit/Bluesky)."
+        ),
+    )
+
     @field_validator("claim_text")
     @classmethod
     def validate_claim_text(cls, value: str) -> str:

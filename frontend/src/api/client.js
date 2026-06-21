@@ -5,11 +5,19 @@ const BASE_URL = 'http://localhost:8000';
  * Runs the full pipeline: retrieval → NLI → LLM → confidence → graph.
  * Returns the GraphResponse JSON (same shape as sampleGraph.json).
  */
-export async function verifyClaim(claimText, contextClaims = [], includeSocial = false) {
+export async function verifyClaim(claimText, contextClaims = [], enabledSourceGroups = null) {
+  const body = {
+    claim_text: claimText,
+    context_claims: contextClaims,
+    include_social: Array.isArray(enabledSourceGroups) ? enabledSourceGroups.includes('social') : false,
+  };
+  if (Array.isArray(enabledSourceGroups)) {
+    body.enabled_source_groups = enabledSourceGroups;
+  }
   const res = await fetch(`${BASE_URL}/api/v1/verify-claim`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ claim_text: claimText, context_claims: contextClaims, include_social: includeSocial }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

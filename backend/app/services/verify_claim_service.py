@@ -80,7 +80,27 @@ class VerifyClaimService:
         self._llm_input_sources = llm_input_sources
         self._context_expansion = context_expansion_svc
 
-    def verify(self, claim_text: str, use_cache: bool = True, context_claims: Optional[List] = None, include_social: bool = False) -> VerifyClaimResult:
+    # Maps source group names → registered retriever source names
+    _GROUP_TO_SOURCES: dict = {
+        "wikipedia":  ["wikipedia"],
+        "live_news":  ["livewiki", "guardian", "newsapi", "gdelt"],
+        "factcheck":  ["factcheck"],
+        "web_search": ["duckduckgo"],
+    }
+    # Maps source group names → domain tags used by domain router (Feature 11)
+    _GROUP_TO_DOMAINS: dict = {
+        "scientific": {"science", "health"},
+        "financial":  {"economics", "crypto"},
+    }
+
+    def verify(
+        self,
+        claim_text: str,
+        use_cache: bool = True,
+        context_claims: Optional[List] = None,
+        include_social: bool = False,
+        enabled_source_groups: Optional[List[str]] = None,
+    ) -> VerifyClaimResult:
         """
         Run the full pipeline for a single claim.
 
@@ -94,16 +114,29 @@ class VerifyClaimService:
         claim_text = claim_text.strip()
         logger.info("VerifyClaimService: verifying claim='%s'", claim_text[:80])
 
-        # 1. Retrieve direct evidence from all sources
+        # Resolve active source groups
+        _DEFAULT_GROUPS = {"wikipedia", "live_news", "factcheck", "scientific", "financial"}
+        active_groups: set = set(enabled_source_groups) if enabled_source_groups is not None else _DEFAULT_GROUPS
+        # "social" in enabled groups takes priority over the separate include_social flag
+        _include_social = include_social or ("social" in active_groups)
+
+        # Build retriever source list for main retrieval from active non-domain groups
+        _active_retriever_sources: list = []
+        for grp, srcs in self._GROUP_TO_SOURCES.items():
+            if grp in active_groups:
+                _active_retriever_sources.extend(srcs)
+
+        # 1. Retrieve direct evidence from selected sources
         sources = self._retrieval.retrieve(
             claim_text,
             max_results=self._max_retrieval_results,
             use_cache=use_cache,
+            sources=_active_retriever_sources if _active_retriever_sources else None,
         )
         logger.info("VerifyClaimService: retrieved %d direct sources", len(sources))
 
-        # 1a. Social media retrieval (optional, off by default)
-        if include_social:
+        # 1a. Social media retrieval (gated by 'social' group or include_social flag)
+        if _include_social:
             from backend.app.retrieval.reddit_retriever import RedditRetriever
             from backend.app.retrieval.bluesky_retriever import BlueskyRetriever
             existing_ids = {s.source_id for s in sources}
@@ -117,9 +150,13 @@ class VerifyClaimService:
                     logger.warning("Social retriever %s failed: %s", retriever.source_name, exc)
             logger.info("VerifyClaimService: %d sources after social media retrieval", len(sources))
 
-        # 1b. Domain-specific retrieval (Feature 11) — science, health, economics, crypto
+        # 1b. Domain-specific retrieval (Feature 11) — gated by 'scientific'/'financial' groups
         from backend.app.utils.domain_router import detect_domains
-        domains = detect_domains(claim_text)
+        _allowed_domains: set = set()
+        for grp, domain_tags in self._GROUP_TO_DOMAINS.items():
+            if grp in active_groups:
+                _allowed_domains.update(domain_tags)
+        domains = detect_domains(claim_text) & _allowed_domains
         if domains:
             _DOMAIN_RETRIEVERS = {
                 "science": ["openalex", "arxiv"],

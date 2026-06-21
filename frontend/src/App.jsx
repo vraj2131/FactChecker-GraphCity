@@ -21,7 +21,6 @@ export default function App() {
   const [error, setError]           = useState(null);
   const [filterVerdict, setFilter]  = useState(null);
   const [verificationHistory, setVerificationHistory] = useState([]);  // Feature 5
-  const [includeSocial, setIncludeSocial] = useState(false);           // Feature 9
 
   const graphCanvasRef = useRef(null);
   const handleSnapshot = useCallback(() => graphCanvasRef.current?.snapshot(), []);
@@ -35,14 +34,14 @@ export default function App() {
   const handleMouseMove  = useCallback((pos)  => setMousePos(pos),      []);
   const handlePanelClose = useCallback(()     => setSelectedNode(null), []);
 
-  const handleVerify = useCallback(async (claimText) => {
+  const handleVerify = useCallback(async (claimText, enabledSourceGroups = null) => {
     setCurrentClaim(claimText);
     setLoading(true);
     setError(null);
     setSelectedNode(null);
     setFilter(null);
     try {
-      const graph = await verifyClaim(claimText, verificationHistory, includeSocial);
+      const graph = await verifyClaim(claimText, verificationHistory, enabledSourceGroups);
       setGraphData(graph);
 
       // Build history entry from top evidence nodes (Feature 5)
@@ -67,7 +66,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [verificationHistory, includeSocial]);
+  }, [verificationHistory]);
 
   const handleClear = useCallback(() => {
     setGraphData(null);
@@ -199,8 +198,6 @@ export default function App() {
           <FilterPanel
             activeFilter={filterVerdict}
             onFilter={setFilter}
-            includeSocial={includeSocial}
-            onToggleSocial={() => setIncludeSocial(v => !v)}
           />
         </div>
 

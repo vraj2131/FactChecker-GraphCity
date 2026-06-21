@@ -313,6 +313,76 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   backdrop-filter: var(--blur-sm);
 }
 
+/* ── Sources panel (Feature 12) ─────────────────────────────────────────── */
+.sources-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.sources-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  padding: 2px 0;
+  transition: color var(--transition);
+  align-self: flex-start;
+}
+.sources-toggle-btn:hover { color: var(--text-secondary); }
+.sources-active-count {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 8px;
+}
+.sources-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 12px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  backdrop-filter: var(--blur-sm);
+}
+.source-group-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 3px 0;
+}
+.source-group-row--locked { opacity: 0.45; cursor: default; }
+.source-group-check {
+  accent-color: #3b82f6;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.source-group-row--locked .source-group-check { cursor: default; }
+.source-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  min-width: 90px;
+}
+.source-group-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sample-claims {
   display: flex;
   flex-wrap: nowrap;

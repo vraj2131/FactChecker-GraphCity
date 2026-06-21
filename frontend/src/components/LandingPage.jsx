@@ -84,7 +84,7 @@ export default function LandingPage({ onVerify, loading = false }) {
           <span className="landing-pipeline-sep">·</span>
           <span className="landing-pipeline-badge">Llama 3.1 (Groq)</span>
           <span className="landing-pipeline-sep">·</span>
-          <span className="landing-pipeline-badge">6 Retrievers</span>
+          <span className="landing-pipeline-badge">14+ Retrievers</span>
           <span className="landing-pipeline-sep">·</span>
           <span className="landing-pipeline-badge">3D Knowledge Graph</span>
         </div>
