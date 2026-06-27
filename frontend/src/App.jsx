@@ -10,6 +10,7 @@ import LandingPage from './components/LandingPage';
 import ContextChainBanner from './components/ContextChainBanner';
 import { VERDICT_CONFIG } from './utils/colorMap';
 import { verifyClaim } from './api/client';
+import { pushClaimHistory, decayContextForLLM, buildHistoryEntry } from './utils/claimChain';
 import { GitBranch, Cpu, Layers, X, Camera } from 'lucide-react';
 
 const SIDE_PANEL_WIDTH = 360;
@@ -21,6 +22,7 @@ export default function App() {
   const [error, setError]           = useState(null);
   const [filterVerdict, setFilter]  = useState(null);
   const [verificationHistory, setVerificationHistory] = useState([]);  // Feature 5
+  const graphCacheRef = useRef(new Map());  // Feature 15: claim_text → graph, for instant chain navigation
 
   const graphCanvasRef = useRef(null);
   const handleSnapshot = useCallback(() => graphCanvasRef.current?.snapshot(), []);
@@ -36,31 +38,29 @@ export default function App() {
 
   const handleVerify = useCallback(async (claimText, enabledSourceGroups = null) => {
     setCurrentClaim(claimText);
-    setLoading(true);
     setError(null);
     setSelectedNode(null);
     setFilter(null);
+
+    // Feature 15: revisiting a claim already verified this session (e.g.
+    // clicking it in the claim-chain banner) renders instantly from cache
+    // instead of re-running the pipeline. Skipped when the user explicitly
+    // customized source groups for this run, since that could change results.
+    if (!enabledSourceGroups) {
+      const cached = graphCacheRef.current.get(claimText);
+      if (cached) {
+        setGraphData(cached);
+        setVerificationHistory(prev => pushClaimHistory(prev, buildHistoryEntry(claimText, cached)));
+        return;
+      }
+    }
+
+    setLoading(true);
     try {
-      const graph = await verifyClaim(claimText, verificationHistory, enabledSourceGroups);
+      const graph = await verifyClaim(claimText, decayContextForLLM(verificationHistory), enabledSourceGroups);
       setGraphData(graph);
-
-      // Build history entry from top evidence nodes (Feature 5)
-      const topSnippets = (graph.nodes || [])
-        .filter(n => !n.is_main_claim && n.top_sources?.length > 0)
-        .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
-        .slice(0, 3)
-        .flatMap(n => n.top_sources?.slice(0, 1).map(s => s.snippet || '') || [])
-        .filter(Boolean);
-
-      setVerificationHistory(prev => [
-        ...prev.slice(-2),
-        {
-          claim_text: claimText,
-          verdict: graph.metadata.overall_verdict,
-          confidence: graph.metadata.overall_confidence,
-          top_snippets: topSnippets.slice(0, 3),
-        },
-      ]);
+      graphCacheRef.current.set(claimText, graph);
+      setVerificationHistory(prev => pushClaimHistory(prev, buildHistoryEntry(claimText, graph)));
     } catch (err) {
       setError(err.message ?? 'Pipeline error — check backend logs.');
     } finally {
@@ -74,6 +74,7 @@ export default function App() {
     setFilter(null);
     setError(null);
     setVerificationHistory([]);
+    graphCacheRef.current.clear();
   }, []);
 
   // ── Landing page (no result yet) ────────────────────────────────────────
@@ -175,10 +176,12 @@ export default function App() {
           )}
         </div>
 
-        {/* Context chain banner — shows prior claims in the chain */}
+        {/* Claim chain banner — prior claims in the chain, clickable to revisit (Feature 15) */}
         {verificationHistory.length > 0 && (
           <ContextChainBanner
             history={verificationHistory}
+            currentClaim={currentClaim}
+            onSelect={handleVerify}
             onClear={() => setVerificationHistory([])}
           />
         )}
