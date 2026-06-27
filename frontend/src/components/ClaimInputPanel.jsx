@@ -32,7 +32,15 @@ export default function ClaimInputPanel({ onVerify, loading = false, claimText =
 
   const handleSubmit = () => {
     const trimmed = value.trim();
-    if (trimmed && !loading) onVerify?.(trimmed, [...enabledGroups]);
+    if (!trimmed || loading) return;
+    // Only pass an explicit group list when the user actually customized
+    // it — passing the unmodified defaults every time defeats App.jsx's
+    // graphCache fast-path (it only engages when enabledSourceGroups is
+    // falsy), forcing every claim to re-hit live retrievers even when
+    // revisiting one already verified this session.
+    const isDefault = enabledGroups.size === DEFAULT_GROUPS.length
+      && DEFAULT_GROUPS.every((g) => enabledGroups.has(g));
+    onVerify?.(trimmed, isDefault ? null : [...enabledGroups]);
   };
 
   const handleKeyDown = (e) => {
