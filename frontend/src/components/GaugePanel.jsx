@@ -1,4 +1,4 @@
-const CX = 100, CY = 90, R = 72, SW = 16, NEEDLE_R = 56;
+const CX = 100, CY = 90, R = 72, SW = 14, NEEDLE_R = R - 6;
 
 function pt(r, deg) {
   const rad = (deg * Math.PI) / 180;
@@ -31,39 +31,30 @@ export default function GaugePanel({ value, label = 'Confidence', bars = [] }) {
         {/* Background track */}
         <path d={arcD(180, 0)} fill="none" stroke="rgba(255,255,255,0.13)" strokeWidth={SW} strokeLinecap="round" />
 
-        {/* Zone boundary ticks at 40% (108°) and 65% (63°) */}
-        {[108, 63].map((deg) => {
-          const [ix, iy] = pt(R - SW / 2 - 1, deg);
-          const [ox, oy] = pt(R + SW / 2 + 1, deg);
-          return <line key={deg} x1={ix.toFixed(2)} y1={iy.toFixed(2)}
-            x2={ox.toFixed(2)} y2={oy.toFixed(2)}
-            stroke="rgba(255,255,255,0.2)" strokeWidth={1.5} />;
-        })}
-
-        {/* Filled arc up to value */}
+        {/* Filled arc up to value — butt caps avoid the "blob" artifact at low/high values */}
         {clamped > 0.005 && (
           <path
-            d={arcD(180, Math.max(needleDeg, 0.5))}
+            d={arcD(180, needleDeg)}
             fill="none"
             stroke={zoneColor}
             strokeWidth={SW}
-            strokeLinecap="round"
+            strokeLinecap="butt"
           />
         )}
 
-        {/* Needle */}
+        {/* Needle — reaches almost to the track for a connected look */}
         <line x1={CX} y1={CY} x2={nx.toFixed(2)} y2={ny.toFixed(2)}
-          stroke="white" strokeWidth={2.5} strokeLinecap="round" />
-        <circle cx={CX} cy={CY} r={5} fill="white" />
-        <circle cx={CX} cy={CY} r={2.5} fill={zoneColor} />
+          stroke="white" strokeWidth={2} strokeLinecap="round" opacity={0.9} />
+        <circle cx={CX} cy={CY} r={4.5} fill="white" />
+        <circle cx={CX} cy={CY} r={2.2} fill={zoneColor} />
 
-        {/* Percentage text only — label moved outside SVG */}
-        <text x={CX} y={CY + 22} textAnchor="middle" fontSize="22"
+        {/* Percentage text */}
+        <text x={CX} y={CY + 26} textAnchor="middle" fontSize="24"
           fontWeight="700" fill="white" fontFamily="inherit">{pct}%</text>
 
         {/* Zone corner labels */}
-        <text x="16" y="108" fontSize="8" fill="rgba(239,68,68,0.55)"  textAnchor="middle">Low</text>
-        <text x="184" y="108" fontSize="8" fill="rgba(34,197,94,0.55)" textAnchor="middle">High</text>
+        <text x="14" y="106" fontSize="8" fill="rgba(239,68,68,0.6)"  textAnchor="middle">Low</text>
+        <text x="186" y="106" fontSize="8" fill="rgba(34,197,94,0.6)" textAnchor="middle">High</text>
       </svg>
 
       {/* Label outside SVG — always clearly readable */}
