@@ -9,6 +9,7 @@ to build the GraphResponse.
 """
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -23,6 +24,7 @@ from backend.app.services.evidence_expansion_service import EvidenceExpansionSer
 from backend.app.services.ranking_service import RankingService
 from backend.app.services.retrieval_service import RetrievalService
 from backend.app.services.stance_service import StanceService
+from backend.app.utils.concurrency import run_concurrent
 from backend.app.utils.constants import (
     CONTEXT_EXPANSION_ENABLED,
     DEFAULT_RETRIEVAL_CACHE_DIR,
@@ -126,6 +128,19 @@ class VerifyClaimService:
             if grp in active_groups:
                 _active_retriever_sources.extend(srcs)
 
+        # Pre-warm the context-expansion query-generation cache concurrently
+        # with retrieval below (Feature 13) — it's a single Groq call that
+        # only needs claim_text, so overlapping it with the much slower
+        # retrieval phase costs nothing. By the time step 1c runs,
+        # generate_context_queries() will be a cache hit.
+        if self._context_expansion is not None and CONTEXT_EXPANSION_ENABLED:
+            threading.Thread(
+                target=self._context_expansion.generate_context_queries,
+                args=(claim_text,),
+                kwargs={"use_cache": use_cache},
+                daemon=True,
+            ).start()
+
         # 1. Retrieve direct evidence from selected sources
         sources = self._retrieval.retrieve(
             claim_text,
@@ -140,14 +155,15 @@ class VerifyClaimService:
             from backend.app.retrieval.reddit_retriever import RedditRetriever
             from backend.app.retrieval.bluesky_retriever import BlueskyRetriever
             existing_ids = {s.source_id for s in sources}
-            for retriever in [RedditRetriever(), BlueskyRetriever()]:
-                try:
-                    for src in retriever.retrieve(claim_text, max_results=5):
-                        if src.source_id not in existing_ids:
-                            sources.append(src)
-                            existing_ids.add(src.source_id)
-                except Exception as exc:
-                    logger.warning("Social retriever %s failed: %s", retriever.source_name, exc)
+            social_tasks = [
+                (retriever.source_name, lambda r=retriever: r.retrieve(claim_text, max_results=5))
+                for retriever in [RedditRetriever(), BlueskyRetriever()]
+            ]
+            for _, results in run_concurrent(social_tasks, max_workers=2, timeout=8.0):
+                for src in results:
+                    if src.source_id not in existing_ids:
+                        sources.append(src)
+                        existing_ids.add(src.source_id)
             logger.info("VerifyClaimService: %d sources after social media retrieval", len(sources))
 
         # 1b. Domain-specific retrieval (Feature 11) — gated by 'scientific'/'financial' groups
@@ -195,22 +211,21 @@ class VerifyClaimService:
                 ).WorldBankRetriever(),
             }
             existing_ids = {s.source_id for s in sources}
-            seen_domain_retrievers: set = set()
+            retriever_keys: set = set()
             for domain in sorted(domains):
-                for retriever_key in _DOMAIN_RETRIEVERS.get(domain, []):
-                    if retriever_key in seen_domain_retrievers:
-                        continue
-                    seen_domain_retrievers.add(retriever_key)
-                    try:
-                        retriever = _RETRIEVER_MAP[retriever_key]()
-                        for src in retriever.retrieve(claim_text, max_results=5):
-                            if src.source_id not in existing_ids:
-                                sources.append(src)
-                                existing_ids.add(src.source_id)
-                    except Exception as exc:
-                        logger.warning(
-                            "Domain retriever %s failed: %s", retriever_key, exc
-                        )
+                retriever_keys.update(_DOMAIN_RETRIEVERS.get(domain, []))
+
+            def _run_domain_retriever(key):
+                return _RETRIEVER_MAP[key]().retrieve(claim_text, max_results=5)
+
+            domain_tasks = [
+                (key, lambda k=key: _run_domain_retriever(k)) for key in retriever_keys
+            ]
+            for _, results in run_concurrent(domain_tasks, max_workers=6, timeout=10.0):
+                for src in results:
+                    if src.source_id not in existing_ids:
+                        sources.append(src)
+                        existing_ids.add(src.source_id)
             logger.info(
                 "VerifyClaimService: %d sources after domain retrieval (domains=%s)",
                 len(sources),

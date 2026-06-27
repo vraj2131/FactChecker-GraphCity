@@ -37,6 +37,7 @@ from groq import Groq
 
 from backend.app.schemas.source_schema import Source
 from backend.app.services.cache_service import CacheService
+from backend.app.utils.concurrency import run_concurrent
 from backend.app.utils.constants import (
     CONTEXT_EXPANSION_CACHE_NAMESPACE,
     CONTEXT_EXPANSION_ENABLED,
@@ -213,24 +214,27 @@ class ContextExpansionService:
         all_sources: List[Source] = []
         seen_ids: set = set()
 
-        for query in queries:
-            try:
-                sources = retrieval_svc.retrieve(
-                    query=query,
+        # Feature 13: run each context query's retrieval concurrently — they
+        # are independent and each already parallelizes across retrievers
+        # internally, so this overlaps the queries themselves too.
+        query_tasks = [
+            (
+                query,
+                lambda q=query: retrieval_svc.retrieve(
+                    query=q,
                     max_results=self._max_results,
                     sources=self._retriever_sources,
                     use_cache=use_cache,
                     expand_queries=False,   # no adversarial variants for context queries
-                )
-                for s in sources:
-                    if s.source_id not in seen_ids:
-                        seen_ids.add(s.source_id)
-                        all_sources.append(s)
-            except Exception as exc:
-                logger.warning(
-                    "ContextExpansionService: retrieval failed for query='%s': %s",
-                    query[:60], exc,
-                )
+                ),
+            )
+            for query in queries
+        ]
+        for query, sources in run_concurrent(query_tasks, max_workers=len(query_tasks), timeout=12.0):
+            for s in sources:
+                if s.source_id not in seen_ids:
+                    seen_ids.add(s.source_id)
+                    all_sources.append(s)
 
         logger.info(
             "ContextExpansionService: retrieved %d context sources for claim='%s'",

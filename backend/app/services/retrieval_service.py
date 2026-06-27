@@ -10,6 +10,7 @@ from backend.app.schemas.source_schema import Source
 from backend.app.services.cache_service import CacheService
 from backend.app.services.evidence_expansion_service import EvidenceExpansionService
 from backend.app.services.ranking_service import RankingService
+from backend.app.utils.concurrency import run_concurrent
 from backend.app.utils.constants import (
     DEFAULT_PER_RETRIEVER_MAX_RESULTS,
     MAX_RESULTS_PER_SOURCE_TYPE,
@@ -271,34 +272,40 @@ class RetrievalService:
                 )
                 return [Source(**item) for item in cached_data]
 
-        # --- Query each retriever ---
+        # --- Query each retriever concurrently (I/O-bound — see Feature 13) ---
         all_results: List[Source] = []
-        failed_retrievers: List[str] = []
         source_counts: dict = {}
 
-        for source_name in available_sources:
-            try:
-                retriever = self._registry.get(source_name)
-                results = retriever.retrieve(
-                    query=normalized_query,
-                    max_results=per_retriever_max,
-                )
-                source_counts[source_name] = len(results)
-                all_results.extend(results)
-                logger.info(
-                    "Retriever '%s' returned %d results for query='%s'",
-                    source_name,
-                    len(results),
-                    normalized_query,
-                )
-            except Exception as exc:
-                failed_retrievers.append(source_name)
-                logger.warning(
-                    "Retriever '%s' failed for query='%s': %s",
-                    source_name,
-                    normalized_query,
-                    exc,
-                )
+        base_tasks = [
+            (
+                source_name,
+                lambda sn=source_name: self._registry.get(sn).retrieve(
+                    query=normalized_query, max_results=per_retriever_max,
+                ),
+            )
+            for source_name in available_sources
+        ]
+        base_completed = run_concurrent(base_tasks, max_workers=10, timeout=12.0)
+        completed_names = {name for name, _ in base_completed}
+        failed_retrievers: List[str] = [
+            s for s in available_sources if s not in completed_names
+        ]
+
+        for source_name, results in base_completed:
+            source_counts[source_name] = len(results)
+            all_results.extend(results)
+            logger.info(
+                "Retriever '%s' returned %d results for query='%s'",
+                source_name,
+                len(results),
+                normalized_query,
+            )
+        for source_name in failed_retrievers:
+            logger.warning(
+                "Retriever '%s' failed or timed out for query='%s'",
+                source_name,
+                normalized_query,
+            )
 
         # --- All retrievers failed ---
         if not all_results and len(failed_retrievers) == len(available_sources):
@@ -324,28 +331,19 @@ class RetrievalService:
                 s for s in available_sources
                 if s in _ADVERSARIAL_RETRIEVER_SOURCES and self._registry.is_registered(s)
             ]
-            for adv_query in adv_queries:
-                for source_name in adv_sources:
-                    try:
-                        retriever = self._registry.get(source_name)
-                        adv_results = retriever.retrieve(
-                            query=adv_query,
-                            max_results=_ADVERSARIAL_MAX_RESULTS,
-                        )
-                        all_results.extend(adv_results)
-                        logger.debug(
-                            "Adversarial query '%s' via '%s': %d results",
-                            adv_query[:60],
-                            source_name,
-                            len(adv_results),
-                        )
-                    except Exception as exc:
-                        logger.debug(
-                            "Adversarial retriever '%s' failed for query='%s': %s",
-                            source_name,
-                            adv_query[:60],
-                            exc,
-                        )
+            adv_tasks = [
+                (
+                    f"{source_name}::{adv_query}",
+                    lambda sn=source_name, aq=adv_query: self._registry.get(sn).retrieve(
+                        query=aq, max_results=_ADVERSARIAL_MAX_RESULTS,
+                    ),
+                )
+                for adv_query in adv_queries
+                for source_name in adv_sources
+            ]
+            for label, adv_results in run_concurrent(adv_tasks, max_workers=10, timeout=8.0):
+                all_results.extend(adv_results)
+                logger.debug("Adversarial query '%s': %d results", label, len(adv_results))
 
         # --- Sub-query decomposition for long claims (Feature 4a) ---
         if expand_queries:
@@ -354,24 +352,19 @@ class RetrievalService:
                 s for s in available_sources
                 if s in _DECOMP_RETRIEVER_SOURCES and self._registry.is_registered(s)
             ]
-            for sub_query in sub_queries:
-                for source_name in decomp_sources:
-                    try:
-                        retriever = self._registry.get(source_name)
-                        sub_results = retriever.retrieve(
-                            query=sub_query,
-                            max_results=_DECOMP_MAX_RESULTS,
-                        )
-                        all_results.extend(sub_results)
-                        logger.info(
-                            "Sub-query '%s' via '%s': %d results",
-                            sub_query[:60], source_name, len(sub_results),
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Sub-query retriever '%s' failed for query='%s': %s",
-                            source_name, sub_query[:60], exc,
-                        )
+            decomp_tasks = [
+                (
+                    f"{source_name}::{sub_query}",
+                    lambda sn=source_name, sq=sub_query: self._registry.get(sn).retrieve(
+                        query=sq, max_results=_DECOMP_MAX_RESULTS,
+                    ),
+                )
+                for sub_query in sub_queries
+                for source_name in decomp_sources
+            ]
+            for label, sub_results in run_concurrent(decomp_tasks, max_workers=10, timeout=8.0):
+                all_results.extend(sub_results)
+                logger.info("Sub-query '%s': %d results", label, len(sub_results))
 
         logger.info(
             "Raw results before dedup/rank: %d | per-source: %s",
@@ -402,19 +395,23 @@ class RetrievalService:
                     s for s in available_sources
                     if s in _FALLBACK_RETRIEVER_SOURCES and self._registry.is_registered(s)
                 ]
-                for source_name in fb_sources:
-                    try:
-                        retriever = self._registry.get(source_name)
-                        fb_results = retriever.retrieve(query=fallback_query, max_results=3)
-                        deduped_ids = {s.source_id for s in deduped}
-                        new = [s for s in fb_results if s.source_id not in deduped_ids]
-                        deduped.extend(new)
-                        logger.info(
-                            "Low-yield fallback '%s' via '%s': +%d sources",
-                            fallback_query[:60], source_name, len(new),
-                        )
-                    except Exception as exc:
-                        logger.debug("Fallback retriever '%s' failed: %s", source_name, exc)
+                fb_tasks = [
+                    (
+                        source_name,
+                        lambda sn=source_name: self._registry.get(sn).retrieve(
+                            query=fallback_query, max_results=3,
+                        ),
+                    )
+                    for source_name in fb_sources
+                ]
+                for source_name, fb_results in run_concurrent(fb_tasks, max_workers=5, timeout=8.0):
+                    deduped_ids = {s.source_id for s in deduped}
+                    new = [s for s in fb_results if s.source_id not in deduped_ids]
+                    deduped.extend(new)
+                    logger.info(
+                        "Low-yield fallback '%s' via '%s': +%d sources",
+                        fallback_query[:60], source_name, len(new),
+                    )
 
         # --- Date-weighted trust adjustment before ranking (Feature 4b) ---
         date_weighted = _apply_date_weighting(deduped)
