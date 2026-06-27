@@ -213,6 +213,7 @@ function MainClaimPanel({ node, graphJson, onClose }) {
           <GaugePanel
             value={meta?.overall_confidence ?? node.confidence}
             label="Overall Confidence"
+            color={verdict.color}
             bars={[
               { label: 'Support Strength', value: meta?.top_support_score ?? 0, color: '#3b82f6' },
               { label: 'Refute Strength',  value: meta?.top_refute_score  ?? 0, color: '#f97316' },
@@ -357,6 +358,7 @@ function EvidencePanel({ node, onClose, onVerify }) {
           <GaugePanel
             value={node.confidence}
             label={node.node_type === 'factcheck_review' ? 'Fact-Check Confidence' : 'Edge Confidence'}
+            color={verdict.color}
             bars={[
               { label: 'Trust Score',     value: node.top_sources?.[0]?.trust_score     ?? 0, color: '#3b82f6' },
               { label: 'Relevance Score', value: node.top_sources?.[0]?.relevance_score ?? 0, color: '#8b5cf6' },

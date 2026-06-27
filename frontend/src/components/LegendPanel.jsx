@@ -13,11 +13,15 @@ const NODE_LEGEND = [
   { key: 'insufficient_evidence', label: NODE_TYPE_LABELS.insufficient_evidence, color: NODE_COLORS.insufficient_evidence },
 ];
 
+// All edges render as solid lines in the 3D graph (GraphCanvas.jsx never
+// reads the backend's `dashed` field) — the legend used to show
+// correlated/insufficient with a dashed swatch, which didn't match what's
+// actually drawn. Kept solid here for both to stay truthful to the graph.
 const EDGE_LEGEND = [
   { key: 'supports',    label: EDGE_TYPE_LABELS.supports,    color: EDGE_COLORS.supports,    dashed: false },
   { key: 'refutes',     label: EDGE_TYPE_LABELS.refutes,     color: EDGE_COLORS.refutes,     dashed: false },
-  { key: 'correlated',  label: EDGE_TYPE_LABELS.correlated,  color: EDGE_COLORS.correlated,  dashed: true  },
-  { key: 'insufficient',label: EDGE_TYPE_LABELS.insufficient,color: EDGE_COLORS.insufficient,dashed: true  },
+  { key: 'correlated',  label: EDGE_TYPE_LABELS.correlated,  color: EDGE_COLORS.correlated,  dashed: false },
+  { key: 'insufficient',label: EDGE_TYPE_LABELS.insufficient,color: EDGE_COLORS.insufficient,dashed: false },
 ];
 
 export default function LegendPanel({ metadata }) {

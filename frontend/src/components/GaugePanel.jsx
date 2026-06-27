@@ -13,7 +13,7 @@ function arcD(fromDeg, toDeg) {
   return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${R} ${R} 0 ${span >= 180 ? 1 : 0} 0 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
 }
 
-export default function GaugePanel({ value, label = 'Confidence', bars = [] }) {
+export default function GaugePanel({ value, label = 'Confidence', bars = [], color }) {
   const clamped = Math.max(0, Math.min(1, value ?? 0));
   const pct = Math.round(clamped * 100);
 
@@ -21,9 +21,16 @@ export default function GaugePanel({ value, label = 'Confidence', bars = [] }) {
   const needleDeg = (1 - clamped) * 180;
   const [nx, ny] = pt(NEEDLE_R, needleDeg);
 
-  const zoneColor =
+  // Prefer the caller's verdict/edge-type color (matches the badge shown
+  // above the gauge) so a high-confidence REJECTED claim reads as red, not
+  // green — green/amber/red by raw magnitude alone contradicted the
+  // verdict badge whenever confidence was high but the verdict was
+  // "rejected". Falls back to a magnitude-based scale only when no
+  // verdict color is given.
+  const zoneColor = color ?? (
     clamped < 0.4 ? '#ef4444' :
-    clamped < 0.65 ? '#f59e0b' : '#22c55e';
+    clamped < 0.65 ? '#f59e0b' : '#22c55e'
+  );
 
   return (
     <div className="gauge-panel">
