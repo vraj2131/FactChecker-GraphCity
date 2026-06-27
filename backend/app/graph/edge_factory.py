@@ -67,7 +67,12 @@ def build_edges(
     confidence_svc: ConfidenceService,
 ) -> List[Edge]:
     """
-    Build one edge per source, connecting node_main → node_ev_XX.
+    Build one edge per source, connecting node_ev_XX → node_main.
+
+    Direction is evidence → main claim (not main → evidence) so the arrow
+    drawn on the graph reads "this evidence feeds into the verdict",
+    matching how a user reads the side panel (click evidence to see how
+    it supports/refutes the claim) — see Feature 14 in plan.md.
 
     Edge properties:
     - edge_type  : from LLM classification (factcheck sources use their NLI label)
@@ -94,8 +99,8 @@ def build_edges(
         edge_conf = confidence_svc.compute_edge_confidence(source, llm_class, nli)
 
         edges.append(Edge(
-            source="node_main",
-            target=f"node_ev_{i:02d}",
+            source=f"node_ev_{i:02d}",
+            target="node_main",
             edge_type=edge_type,
             weight=round(edge_conf, 3),
             color=_EDGE_TYPE_TO_COLOR.get(edge_type, EDGE_COLOR_INSUFFICIENT),
@@ -276,7 +281,9 @@ def build_extended_edges(ext_pairs: List[Tuple[Node, str]]) -> List[Edge]:
         ext_pairs: List of (extended_node, parent_node_id) from build_extended_nodes().
 
     Returns:
-        List of Edge objects (parent → child, thinner than Tier 1 edges).
+        List of Edge objects (child → parent, thinner than Tier 1 edges).
+        Direction matches build_edges(): the child feeds evidence into its
+        parent, same as evidence → main claim (Feature 14).
     """
     edges: List[Edge] = []
     for ext_node, parent_node_id in ext_pairs:
@@ -284,8 +291,8 @@ def build_extended_edges(ext_pairs: List[Tuple[Node, str]]) -> List[Edge]:
         color = EDGE_COLOR_SUPPORTS if edge_type == "supports" else EDGE_COLOR_REFUTES
 
         edges.append(Edge(
-            source=parent_node_id,
-            target=ext_node.node_id,
+            source=ext_node.node_id,
+            target=parent_node_id,
             edge_type=edge_type,
             weight=round(ext_node.confidence, 3),
             color=color,

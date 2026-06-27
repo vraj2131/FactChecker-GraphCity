@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import * as THREE from 'three';
-import { getEdgeStyle } from '../utils/edgeStyle';
+import { getEdgeStyle, getArrowLength } from '../utils/edgeStyle';
 import { getNodeRadius, getGlowMultiplier } from '../utils/nodeSize';
 import { transformToForceGraph } from '../utils/graphTransforms';
 
@@ -256,6 +256,9 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
     (link) => getEdgeStyle(link.edge_type).particleSpeed,
     []
   );
+  // Feature 14: arrow only where the relation is actually directional —
+  // symmetric relations (corroborates/contradicts/shared_topic) get 0.
+  const linkArrowLength = useCallback((link) => getArrowLength(link), []);
 
   // ── Hover handler ──────────────────────────────────────────────────────────
   const handleNodeHover = useCallback(
@@ -346,7 +349,7 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
         linkDirectionalParticleWidth={(link) => Math.max(link.width * 0.55, 0.8)}
         linkDirectionalParticleColor={(link) => link.color}
         linkDirectionalParticleSpeed={linkParticleSpeed}
-        linkDirectionalArrowLength={5}
+        linkDirectionalArrowLength={linkArrowLength}
         linkDirectionalArrowRelPos={0.92}
         linkDirectionalArrowColor={(link) => link.color}
         // Interaction
