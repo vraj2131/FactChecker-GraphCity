@@ -1,4 +1,4 @@
-const CX = 100, CY = 90, R = 72, SW = 14, NEEDLE_R = R - 6;
+const CX = 100, CY = 90, R = 72, SW = 14;
 
 function pt(r, deg) {
   const rad = (deg * Math.PI) / 180;
@@ -19,7 +19,18 @@ export default function GaugePanel({ value, label = 'Confidence', bars = [], col
 
   // 0% = 180°, 100% = 0°
   const needleDeg = (1 - clamped) * 180;
-  const [nx, ny] = pt(NEEDLE_R, needleDeg);
+
+  // Tapered needle: a slim triangle pivoting from the center hub to a point
+  // just short of the track. Base is widest at the hub and narrows to the tip.
+  const rad = (needleDeg * Math.PI) / 180;
+  const dir = [Math.cos(rad), -Math.sin(rad)];   // center → tip
+  const perp = [Math.sin(rad), Math.cos(rad)];   // across the needle
+  const HALF_W = 4.2;                             // base half-width at hub
+  const TIP_R = R - SW / 2 - 2;                   // tip stops just inside track
+  const tip = [CX + TIP_R * dir[0], CY + TIP_R * dir[1]];
+  const b1 = [CX + HALF_W * perp[0], CY + HALF_W * perp[1]];
+  const b2 = [CX - HALF_W * perp[0], CY - HALF_W * perp[1]];
+  const needlePts = [tip, b1, b2].map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
 
   // Prefer the caller's verdict/edge-type color (matches the badge shown
   // above the gauge) so a high-confidence REJECTED claim reads as red, not
@@ -49,11 +60,11 @@ export default function GaugePanel({ value, label = 'Confidence', bars = [], col
           />
         )}
 
-        {/* Needle — reaches almost to the track for a connected look */}
-        <line x1={CX} y1={CY} x2={nx.toFixed(2)} y2={ny.toFixed(2)}
-          stroke="white" strokeWidth={2} strokeLinecap="round" opacity={0.9} />
-        <circle cx={CX} cy={CY} r={4.5} fill="white" />
-        <circle cx={CX} cy={CY} r={2.2} fill={zoneColor} />
+        {/* Tapered needle (white for contrast against the arc) + colored hub */}
+        <polygon points={needlePts} fill="white" stroke="rgba(0,0,0,0.35)" strokeWidth={0.5} />
+        <circle cx={CX} cy={CY} r={7} fill={zoneColor} opacity={0.3} />
+        <circle cx={CX} cy={CY} r={5} fill="white" />
+        <circle cx={CX} cy={CY} r={2.6} fill={zoneColor} />
 
         {/* Percentage text */}
         <text x={CX} y={CY + 26} textAnchor="middle" fontSize="24"
