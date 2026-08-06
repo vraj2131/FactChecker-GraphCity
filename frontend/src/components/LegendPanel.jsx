@@ -22,6 +22,9 @@ const EDGE_LEGEND = [
   { key: 'refutes',     label: EDGE_TYPE_LABELS.refutes,     color: EDGE_COLORS.refutes,     dashed: false },
   { key: 'correlated',  label: EDGE_TYPE_LABELS.correlated,  color: EDGE_COLORS.correlated,  dashed: false },
   { key: 'insufficient',label: EDGE_TYPE_LABELS.insufficient,color: EDGE_COLORS.insufficient,dashed: false },
+  // Golden overrides the type color above whenever a fact-check source is
+  // one of the edge's endpoints, regardless of supports/refutes/correlated.
+  { key: 'factcheck',   label: 'Fact-Check',                 color: EDGE_COLORS.factcheck,   dashed: false },
 ];
 
 export default function LegendPanel({ metadata }) {

@@ -376,7 +376,7 @@ NODE_COLOR_MAIN_REJECTED     = "#C62828"   # red    — rejected main claim
 NODE_COLOR_MAIN_NEI          = "#757575"   # grey   — not enough info
 NODE_COLOR_DIRECT_SUPPORT    = "#1565C0"   # blue   — direct support evidence
 NODE_COLOR_DIRECT_REFUTE     = "#BF360C"   # deep orange — direct refute evidence
-NODE_COLOR_FACTCHECK_REVIEW  = "#6A1B9A"   # purple — professional fact-check
+NODE_COLOR_FACTCHECK_REVIEW  = "#F5B300"   # golden yellow — professional fact-check
 NODE_COLOR_CONTEXT_SIGNAL    = "#4A148C"   # violet — correlated context
 NODE_COLOR_INSUFFICIENT      = "#424242"   # dark grey — insufficient evidence
 
@@ -390,6 +390,7 @@ EDGE_COLOR_SUPPORTS          = "#1E88E5"   # blue
 EDGE_COLOR_REFUTES           = "#FB8C00"   # orange
 EDGE_COLOR_CORRELATED        = "#8E24AA"   # purple
 EDGE_COLOR_INSUFFICIENT      = "#BDBDBD"   # light grey
+EDGE_COLOR_FACTCHECK         = "#F5B300"   # golden yellow — edges touching a fact-check source
 
 # --- Edge widths (scaled by edge confidence × relevance) ---
 EDGE_WIDTH_MAX               = 2.0    # max visual width (kept thin for clarity)

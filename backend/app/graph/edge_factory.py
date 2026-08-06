@@ -17,6 +17,7 @@ from backend.app.schemas.source_schema import Source
 from backend.app.services.confidence_service import ConfidenceService
 from backend.app.utils.constants import (
     EDGE_COLOR_CORRELATED,
+    EDGE_COLOR_FACTCHECK,
     EDGE_COLOR_INSUFFICIENT,
     EDGE_COLOR_REFUTES,
     EDGE_COLOR_SUPPORTS,
@@ -98,12 +99,18 @@ def build_edges(
         nli = nli_results.get(i - 1)
         edge_conf = confidence_svc.compute_edge_confidence(source, llm_class, nli)
 
+        # Fact-check sources always render golden, matching the node color
+        # override in node_factory (factcheck source_type wins regardless
+        # of edge_type/classification).
+        is_factcheck = source.source_type == "factcheck"
+        color = EDGE_COLOR_FACTCHECK if is_factcheck else _EDGE_TYPE_TO_COLOR.get(edge_type, EDGE_COLOR_INSUFFICIENT)
+
         edges.append(Edge(
             source=f"node_ev_{i:02d}",
             target="node_main",
             edge_type=edge_type,
             weight=round(edge_conf, 3),
-            color=_EDGE_TYPE_TO_COLOR.get(edge_type, EDGE_COLOR_INSUFFICIENT),
+            color=color,
             width=_edge_width(edge_conf, source.relevance_score),
             dashed=_EDGE_TYPE_DASHED.get(edge_type, True),
             label=edge_type,
@@ -194,13 +201,17 @@ def build_inter_node_edges(
         linked_pairs.add(pair)
 
         edge_type = _RELATION_TO_EDGE_TYPE.get(nl.relation, "correlated")
-        color = _EDGE_TYPE_TO_COLOR.get(edge_type, EDGE_COLOR_CORRELATED)
-        dashed = edge_type in ("correlated", "insufficient")
 
         # Edge confidence: average of the two nodes' source quality signals
         src_a = sources[nl.from_index - 1]
         src_b = sources[nl.to_index - 1]
         avg_relevance = (src_a.relevance_score + src_b.relevance_score) / 2
+
+        # Golden when either endpoint is a fact-check source, mirroring the
+        # main-claim edge override above.
+        is_factcheck = src_a.source_type == "factcheck" or src_b.source_type == "factcheck"
+        color = EDGE_COLOR_FACTCHECK if is_factcheck else _EDGE_TYPE_TO_COLOR.get(edge_type, EDGE_COLOR_CORRELATED)
+        dashed = edge_type in ("correlated", "insufficient")
         weight = round(avg_relevance * 0.7, 3)
 
         edges.append(Edge(
@@ -250,9 +261,11 @@ def build_inter_node_edges(
             else:
                 edge_type = "correlated"
 
-            color = _EDGE_TYPE_TO_COLOR.get(edge_type, EDGE_COLOR_CORRELATED)
+            src_i, src_j = sources[i - 1], sources[j - 1]
+            is_factcheck = src_i.source_type == "factcheck" or src_j.source_type == "factcheck"
+            color = EDGE_COLOR_FACTCHECK if is_factcheck else _EDGE_TYPE_TO_COLOR.get(edge_type, EDGE_COLOR_CORRELATED)
             weight = round(sim * 0.6, 3)   # scale down — heuristic edges are weaker
-            avg_rel = (sources[i - 1].relevance_score + sources[j - 1].relevance_score) / 2
+            avg_rel = (src_i.relevance_score + src_j.relevance_score) / 2
 
             edges.append(Edge(
                 source=f"node_ev_{i:02d}",

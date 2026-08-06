@@ -6,7 +6,7 @@ export const NODE_COLORS = {
   main_claim_nei:        '#757575',
   direct_support:        '#1565C0',
   direct_refute:         '#BF360C',
-  factcheck_review:      '#6A1B9A',
+  factcheck_review:      '#F5B300',
   context_signal:        '#4A148C',
   insufficient_evidence: '#424242',
 };
@@ -16,6 +16,7 @@ export const EDGE_COLORS = {
   refutes:     '#FB8C00',
   correlated:  '#8E24AA',
   insufficient:'#BDBDBD',
+  factcheck:   '#F5B300',   // golden — edges touching a fact-check source (overrides edge_type color)
 };
 
 // Human-readable display labels
