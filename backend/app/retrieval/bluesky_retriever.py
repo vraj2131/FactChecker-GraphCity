@@ -1,9 +1,12 @@
+import logging
 import os
 from typing import Any, Dict, List
 
 from backend.app.retrieval.base_retriever import BaseRetriever
 from backend.app.schemas.source_schema import Source
 from backend.app.utils.constants import SOURCE_NAME_BLUESKY
+
+logger = logging.getLogger(__name__)
 
 TRUST_SCORE_BLUESKY = 0.35
 
@@ -18,6 +21,7 @@ class BlueskyRetriever(BaseRetriever):
 
     def fetch_raw(self, query: str, max_results: int = 5, **kwargs: Any) -> List[Dict]:
         if not self._identifier or not self._app_password:
+            logger.warning("bluesky: skipping — BLUESKY_IDENTIFIER / BLUESKY_APP_PASSWORD not set")
             return []
         try:
             from atproto import Client
@@ -37,7 +41,8 @@ class BlueskyRetriever(BaseRetriever):
                 handle = getattr(getattr(post, "author", None), "handle", "bluesky")
                 results.append({"text": text, "uri": uri, "handle": handle})
             return results
-        except Exception:
+        except Exception as exc:
+            logger.warning("bluesky: retrieval failed for query %r: %s", query, exc)
             return []
 
     def normalize(self, raw_data: Any, query: str, max_results: int = 5, **kwargs: Any) -> List[Source]:

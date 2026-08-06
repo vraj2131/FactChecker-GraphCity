@@ -2060,3 +2060,170 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   margin-top: 4px;
   letter-spacing: 0.03em;
 }
+
+/* ─── Verify progress overlay (3-step wheel) ─────────────────────────── */
+
+.verify-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7, 10, 18, 0.82);
+  backdrop-filter: blur(6px);
+  animation: verifyFadeIn 0.25s ease;
+}
+
+@keyframes verifyFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.verify-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 36px 44px;
+  border-radius: 18px;
+  background: rgba(15, 20, 32, 0.92);
+  border: 1px solid rgba(129, 140, 248, 0.18);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  max-width: 420px;
+  width: calc(100% - 48px);
+}
+
+.verify-wheel {
+  position: relative;
+  width: 160px;
+  height: 160px;
+}
+
+.verify-wheel-svg { width: 100%; height: 100%; }
+
+.verify-wheel-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.verify-wheel-pct {
+  font-size: 30px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+
+.verify-wheel-step {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.verify-wheel-spinner {
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: rgba(129, 140, 248, 0.45);
+  animation: spin 1.4s linear infinite;
+}
+
+.verify-overlay-claim {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+  font-style: italic;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.verify-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.verify-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: background 0.3s, border-color 0.3s, opacity 0.3s;
+}
+
+.verify-step--pending { opacity: 0.38; }
+
+.verify-step--active {
+  background: rgba(129, 140, 248, 0.09);
+  border-color: rgba(129, 140, 248, 0.28);
+}
+
+.verify-step--done { opacity: 0.75; }
+
+.verify-step-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
+
+.verify-step--active .verify-step-icon {
+  background: rgba(129, 140, 248, 0.18);
+  color: #a5b4fc;
+}
+
+.verify-step--done .verify-step-icon {
+  background: rgba(34, 197, 94, 0.14);
+  color: #4ade80;
+}
+
+.verify-step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.verify-step-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #e2e8f0);
+}
+
+.verify-step--active .verify-step-label { color: #c7d2fe; }
+
+.verify-step-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.verify-step-pulse {
+  position: absolute;
+  right: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #818cf8;
+  animation: verifyPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes verifyPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}

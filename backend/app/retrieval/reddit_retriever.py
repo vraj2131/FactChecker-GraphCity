@@ -1,9 +1,12 @@
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
 from backend.app.retrieval.base_retriever import BaseRetriever
 from backend.app.schemas.source_schema import Source
 from backend.app.utils.constants import SOURCE_NAME_REDDIT
+
+logger = logging.getLogger(__name__)
 
 TRUST_SCORE_REDDIT = 0.45
 
@@ -18,6 +21,7 @@ class RedditRetriever(BaseRetriever):
         client_id     = os.getenv("REDDIT_CLIENT_ID", "")
         client_secret = os.getenv("REDDIT_CLIENT_SECRET", "")
         if not client_id or not client_secret:
+            logger.warning("reddit: skipping — REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET not set")
             return []
         try:
             import praw
@@ -42,7 +46,8 @@ class RedditRetriever(BaseRetriever):
                     "created_utc": submission.created_utc,
                 })
             return results
-        except Exception:
+        except Exception as exc:
+            logger.warning("reddit: retrieval failed for query %r: %s", query, exc)
             return []
 
     def normalize(self, raw_data: Any, query: str, max_results: int = 5, **kwargs: Any) -> List[Source]:

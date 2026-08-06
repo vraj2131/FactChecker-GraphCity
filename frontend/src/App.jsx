@@ -8,6 +8,7 @@ import InfoTabsPanel from './components/InfoTabsPanel';
 import FilterPanel from './components/FilterPanel';
 import LandingPage from './components/LandingPage';
 import ContextChainBanner from './components/ContextChainBanner';
+import VerifyProgressOverlay from './components/VerifyProgressOverlay';
 import { VERDICT_CONFIG } from './utils/colorMap';
 import { verifyClaim } from './api/client';
 import { pushClaimHistory, decayContextForLLM, buildHistoryEntry } from './utils/claimChain';
@@ -93,15 +94,11 @@ export default function App() {
     );
   }
 
-  // Loading state — show starfield with spinner, no graph yet
+  // Loading state — 3-step progress wheel, no graph yet
   if (loading && !graphData) {
     return (
       <div className="app">
-        <div className="loading-fullscreen">
-          <div className="loading-spinner-ring" />
-          <p className="loading-fullscreen-text">Analysing claim…</p>
-          <p className="loading-fullscreen-sub">Retrieving evidence · Running NLI · Consulting LLM</p>
-        </div>
+        <VerifyProgressOverlay claimText={currentClaim} />
       </div>
     );
   }
@@ -225,6 +222,9 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* ── Re-verify progress wheel over the existing graph ─────────────── */}
+      {loading && <VerifyProgressOverlay claimText={currentClaim} />}
 
       {/* ── Tooltip ──────────────────────────────────────────────────────── */}
       {hoveredNode && !loading && <NodeTooltip node={hoveredNode} pos={mousePos} />}
