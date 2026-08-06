@@ -272,99 +272,86 @@ class RetrievalService:
                 )
                 return [Source(**item) for item in cached_data]
 
-        # --- Query each retriever concurrently (I/O-bound — see Feature 13) ---
+        # --- Single concurrent retrieval wave -------------------------------
+        # Base, adversarial, and decomposition queries are all derived from
+        # the claim text alone — none depends on another's results — so they
+        # run as ONE wave with ONE timeout ceiling instead of three stacked
+        # ones (was 12s + 8s + 8s sequential worst case; now 10s total).
         all_results: List[Source] = []
         source_counts: dict = {}
 
-        base_tasks = [
+        tasks = [
             (
-                source_name,
+                f"base::{source_name}",
                 lambda sn=source_name: self._registry.get(sn).retrieve(
                     query=normalized_query, max_results=per_retriever_max,
                 ),
             )
             for source_name in available_sources
         ]
-        base_completed = run_concurrent(base_tasks, max_workers=10, timeout=12.0)
-        completed_names = {name for name, _ in base_completed}
-        failed_retrievers: List[str] = [
-            s for s in available_sources if s not in completed_names
-        ]
 
-        for source_name, results in base_completed:
-            source_counts[source_name] = len(results)
-            all_results.extend(results)
-            logger.info(
-                "Retriever '%s' returned %d results for query='%s'",
-                source_name,
-                len(results),
-                normalized_query,
-            )
-        for source_name in failed_retrievers:
-            logger.warning(
-                "Retriever '%s' failed or timed out for query='%s'",
-                source_name,
-                normalized_query,
-            )
-
-        # --- All retrievers failed ---
-        if not all_results and len(failed_retrievers) == len(available_sources):
-            raise RuntimeError(
-                f"All retrievers failed for query='{normalized_query}'. "
-                f"Failed: {failed_retrievers}"
-            )
-
-        if failed_retrievers:
-            logger.warning(
-                "Partial retrieval: %d retrievers failed (%s). "
-                "Proceeding with %d raw results from %d sources.",
-                len(failed_retrievers),
-                failed_retrievers,
-                len(all_results),
-                len(available_sources) - len(failed_retrievers),
-            )
-
-        # --- Adversarial query expansion (debunking variants) ---
         if expand_queries:
             adv_queries = _adversarial_queries(normalized_query)
             adv_sources = [
-                s for s in available_sources
-                if s in _ADVERSARIAL_RETRIEVER_SOURCES and self._registry.is_registered(s)
+                s for s in available_sources if s in _ADVERSARIAL_RETRIEVER_SOURCES
             ]
-            adv_tasks = [
+            tasks.extend(
                 (
-                    f"{source_name}::{adv_query}",
+                    f"adv::{source_name}::{adv_query}",
                     lambda sn=source_name, aq=adv_query: self._registry.get(sn).retrieve(
                         query=aq, max_results=_ADVERSARIAL_MAX_RESULTS,
                     ),
                 )
                 for adv_query in adv_queries
                 for source_name in adv_sources
-            ]
-            for label, adv_results in run_concurrent(adv_tasks, max_workers=10, timeout=8.0):
-                all_results.extend(adv_results)
-                logger.debug("Adversarial query '%s': %d results", label, len(adv_results))
+            )
 
-        # --- Sub-query decomposition for long claims (Feature 4a) ---
-        if expand_queries:
             sub_queries = _decompose_query(normalized_query)
             decomp_sources = [
-                s for s in available_sources
-                if s in _DECOMP_RETRIEVER_SOURCES and self._registry.is_registered(s)
+                s for s in available_sources if s in _DECOMP_RETRIEVER_SOURCES
             ]
-            decomp_tasks = [
+            tasks.extend(
                 (
-                    f"{source_name}::{sub_query}",
+                    f"sub::{source_name}::{sub_query}",
                     lambda sn=source_name, sq=sub_query: self._registry.get(sn).retrieve(
                         query=sq, max_results=_DECOMP_MAX_RESULTS,
                     ),
                 )
                 for sub_query in sub_queries
                 for source_name in decomp_sources
-            ]
-            for label, sub_results in run_concurrent(decomp_tasks, max_workers=10, timeout=8.0):
-                all_results.extend(sub_results)
-                logger.info("Sub-query '%s': %d results", label, len(sub_results))
+            )
+
+        completed = run_concurrent(tasks, max_workers=16, timeout=10.0)
+
+        completed_base_names = set()
+        for label, results in completed:
+            kind, _, rest = label.partition("::")
+            if kind == "base":
+                completed_base_names.add(rest)
+                source_counts[rest] = len(results)
+                logger.info(
+                    "Retriever '%s' returned %d results for query='%s'",
+                    rest, len(results), normalized_query,
+                )
+            else:
+                logger.info("Expansion query '%s': %d results", rest, len(results))
+            all_results.extend(results)
+
+        failed_retrievers: List[str] = [
+            s for s in available_sources if s not in completed_base_names
+        ]
+        for source_name in failed_retrievers:
+            logger.warning(
+                "Retriever '%s' failed or timed out for query='%s'",
+                source_name, normalized_query,
+            )
+
+        # --- All base retrievers failed and nothing else came back ---
+        if not all_results and len(failed_retrievers) == len(available_sources):
+            raise RuntimeError(
+                f"All retrievers failed for query='{normalized_query}'. "
+                f"Failed: {failed_retrievers}"
+            )
 
         logger.info(
             "Raw results before dedup/rank: %d | per-source: %s",

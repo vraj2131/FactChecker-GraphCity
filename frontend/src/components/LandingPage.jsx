@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Search, Sparkles, Loader, GitBranch } from 'lucide-react';
+import { Search, Sparkles, Loader, GitBranch, ChevronDown, ChevronUp } from 'lucide-react';
+import { SOURCE_GROUPS, DEFAULT_GROUPS, isDefaultSelection } from '../utils/sourceGroups';
 
 const SUGGESTIONS = [
   'The Great Wall of China is visible from space.',
@@ -12,10 +13,24 @@ const SUGGESTIONS = [
 
 export default function LandingPage({ onVerify, loading = false }) {
   const [value, setValue] = useState('');
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [enabledGroups, setEnabledGroups] = useState(new Set(DEFAULT_GROUPS));
+  const [deepNli, setDeepNli] = useState(true);
 
   const handleSubmit = () => {
     const trimmed = value.trim();
-    if (trimmed && !loading) onVerify(trimmed);
+    if (!trimmed || loading) return;
+    // null when defaults are untouched, so App.jsx's cache fast-path works
+    onVerify(trimmed, isDefaultSelection(enabledGroups) ? null : [...enabledGroups], deepNli);
+  };
+
+  const toggleGroup = (key) => {
+    setEnabledGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   return (
@@ -61,6 +76,59 @@ export default function LandingPage({ onVerify, loading = false }) {
               : <><Sparkles size={15} />Verify Claim</>
             }
           </button>
+        </div>
+
+        {/* Source group selector — same groups as the top-bar panel */}
+        <div className="sources-row landing-sources-row">
+          <div className="sources-controls-line">
+            <button
+              className="sources-toggle-btn"
+              onClick={() => setSourcesOpen(v => !v)}
+              disabled={loading}
+            >
+              {sourcesOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+              Sources
+              <span className="sources-active-count">{enabledGroups.size} / {SOURCE_GROUPS.length}</span>
+            </button>
+            <label
+              className="deep-nli-toggle"
+              title="Re-check borderline stance labels with a stronger NLI model (more accurate, a few seconds slower)"
+            >
+              <input
+                type="checkbox"
+                className="source-group-check"
+                checked={deepNli}
+                disabled={loading}
+                onChange={() => setDeepNli(v => !v)}
+              />
+              Deep NLI
+            </label>
+          </div>
+
+          {sourcesOpen && (
+            <div className="sources-panel">
+              {SOURCE_GROUPS.map(({ key, label, desc, alwaysOn }) => {
+                const on = alwaysOn || enabledGroups.has(key);
+                return (
+                  <label
+                    key={key}
+                    className={`source-group-row ${alwaysOn ? 'source-group-row--locked' : ''}`}
+                    title={alwaysOn ? 'Always enabled' : desc}
+                  >
+                    <input
+                      type="checkbox"
+                      className="source-group-check"
+                      checked={on}
+                      disabled={alwaysOn}
+                      onChange={() => !alwaysOn && toggleGroup(key)}
+                    />
+                    <span className="source-group-label">{label}</span>
+                    <span className="source-group-desc">{desc}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Suggestions */}

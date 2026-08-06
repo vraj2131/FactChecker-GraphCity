@@ -58,6 +58,15 @@ class VerifyClaimRequest(BaseModel):
         description="Whether to include Reddit and Bluesky as evidence sources."
     )
 
+    deep_nli: bool = Field(
+        default=True,
+        description=(
+            "If true, borderline NLI stance labels are re-checked by a stronger "
+            "confirmation model (more accurate, slower). If false, only the fast "
+            "NLI model runs."
+        ),
+    )
+
     enabled_source_groups: List[str] = Field(
         default=["wikipedia", "live_news", "factcheck", "scientific", "financial"],
         description=(

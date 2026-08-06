@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, List, Optional, Set
 
 from backend.app.retrieval.base_retriever import BaseRetriever
@@ -6,6 +7,8 @@ from backend.app.utils.constants import (
     DEFAULT_RETRIEVER_MAX_RESULTS,
     SOURCE_NAME_DUCKDUCKGO,
 )
+
+logger = logging.getLogger(__name__)
 
 TRUST_SCORE_DUCKDUCKGO = 0.60
 
@@ -36,12 +39,14 @@ class DuckDuckGoRetriever(BaseRetriever):
             try:
                 from duckduckgo_search import DDGS
             except ImportError:
+                logger.warning("duckduckgo: skipping — neither 'ddgs' nor 'duckduckgo_search' is installed")
                 return []
 
         try:
             results = list(DDGS().text(query, max_results=max_results * 2))
             return results
-        except Exception:
+        except Exception as exc:
+            logger.warning("duckduckgo: retrieval failed for query %r: %s", query, exc)
             return []
 
     def normalize(

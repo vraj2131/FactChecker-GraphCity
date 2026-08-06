@@ -5,11 +5,12 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
  * Runs the full pipeline: retrieval → NLI → LLM → confidence → graph.
  * Returns the GraphResponse JSON (same shape as sampleGraph.json).
  */
-export async function verifyClaim(claimText, contextClaims = [], enabledSourceGroups = null) {
+export async function verifyClaim(claimText, contextClaims = [], enabledSourceGroups = null, deepNli = true) {
   const body = {
     claim_text: claimText,
     context_claims: contextClaims,
     include_social: Array.isArray(enabledSourceGroups) ? enabledSourceGroups.includes('social') : false,
+    deep_nli: deepNli,
   };
   if (Array.isArray(enabledSourceGroups)) {
     body.enabled_source_groups = enabledSourceGroups;

@@ -2227,3 +2227,30 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   0%, 100% { opacity: 0.35; transform: scale(0.8); }
   50%      { opacity: 1;    transform: scale(1.15); }
 }
+
+/* Landing page sources selector */
+.landing-sources-row {
+  margin-top: 10px;
+  align-items: flex-start;
+  text-align: left;
+}
+.landing-sources-row .sources-panel {
+  width: 100%;
+}
+
+/* Sources button + Deep NLI toggle on one line */
+.sources-controls-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.deep-nli-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.deep-nli-toggle:hover { color: var(--text-secondary); }

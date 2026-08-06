@@ -4,7 +4,10 @@ from typing import Dict, List, Optional, Tuple
 from backend.app.models.nli_model import NLIModel, NLIResult
 from backend.app.schemas.source_schema import Source
 from backend.app.services.cache_service import CacheService
-from backend.app.utils.constants import NLI_CACHE_NAMESPACE
+from backend.app.utils.constants import (
+    NLI_CACHE_NAMESPACE,
+    NLI_CONFIRM_SKIP_CONFIDENCE,
+)
 from backend.app.utils.hashing import build_cache_key
 
 logger = logging.getLogger(__name__)
@@ -58,7 +61,7 @@ class StanceService:
             )
 
     def classify(
-        self, claim: str, sources: List[Source]
+        self, claim: str, sources: List[Source], deep: bool = True
     ) -> Tuple[List[Source], Dict[int, NLIResult]]:
         """
         Run NLI over all sources with snippets and set stance_hint.
@@ -69,6 +72,8 @@ class StanceService:
         Args:
             claim:   The main claim text.
             sources: List of Source objects from EvidenceExpansionService.
+            deep:    If False, skip the confirm-model cascade entirely and
+                     use only the fast model (user-selectable speed mode).
 
         Returns:
             Tuple of:
@@ -94,7 +99,7 @@ class StanceService:
             if not source.snippet or not source.snippet.strip():
                 continue
 
-            cache_key = self._build_nli_cache_key(claim, source)
+            cache_key = self._build_nli_cache_key(claim, source, deep)
             if self._cache.exists(NLI_CACHE_NAMESPACE, cache_key):
                 raw = self._cache.load(NLI_CACHE_NAMESPACE, cache_key)
                 if raw is not None:
@@ -122,13 +127,13 @@ class StanceService:
             for source_idx, result in zip(needs_nli, predictions):
                 nli_results[source_idx] = result
 
-        # --- Step 3: cascade confirmation ---
-        if self._confirm_model and nli_results:
+        # --- Step 3: cascade confirmation (skipped entirely when deep=False) ---
+        if deep and self._confirm_model and nli_results:
             nli_results = self._run_cascade(claim, sources, nli_results)
 
         # --- Step 4: persist fresh results to cache ---
         for source_idx, result in nli_results.items():
-            cache_key = self._build_nli_cache_key(claim, sources[source_idx])
+            cache_key = self._build_nli_cache_key(claim, sources[source_idx], deep)
             self._cache.save(NLI_CACHE_NAMESPACE, cache_key, {
                 "label": result.label,
                 "confidence": result.confidence,
@@ -165,14 +170,28 @@ class StanceService:
         Run confirm_model on snippets where the fast model said supports/refutes.
 
         not_enough_info results skip the confirm_model (no point spending compute
-        confirming an already-weak result).
+        confirming an already-weak result). High-confidence fast-model results
+        (>= NLI_CONFIRM_SKIP_CONFIDENCE) also skip confirmation — they almost
+        never flip, and re-checking them was pure latency.
 
         Returns an updated copy of initial with confirmed labels where applicable.
         """
         to_confirm = [
             idx for idx, result in initial.items()
             if result.label in ("supports", "refutes")
+            and result.confidence < NLI_CONFIRM_SKIP_CONFIDENCE
         ]
+
+        skipped_confident = sum(
+            1 for r in initial.values()
+            if r.label in ("supports", "refutes")
+            and r.confidence >= NLI_CONFIRM_SKIP_CONFIDENCE
+        )
+        if skipped_confident:
+            logger.info(
+                "Cascade: %d high-confidence result(s) skipped confirmation (>= %.2f)",
+                skipped_confident, NLI_CONFIRM_SKIP_CONFIDENCE,
+            )
 
         if not to_confirm:
             logger.info("Cascade: no supports/refutes to confirm.")
@@ -201,14 +220,14 @@ class StanceService:
 
         return updated
 
-    def _build_nli_cache_key(self, claim: str, source: Source) -> str:
+    def _build_nli_cache_key(self, claim: str, source: Source, deep: bool = True) -> str:
         """
         Build a stable cache key for this (claim, snippet) pair.
-        Includes confirm_model name so cascade results are cached separately
-        from single-model results.
+        Includes confirm_model name when the cascade is active so cascade
+        results are cached separately from fast-only (deep=False) results.
         """
         kwargs: dict = {"snippet": source.snippet or ""}
-        if self._confirm_model:
+        if deep and self._confirm_model:
             kwargs["confirm_model"] = self._confirm_model.model_name
         return build_cache_key(
             source_name=NLI_CACHE_NAMESPACE,

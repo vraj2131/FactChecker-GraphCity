@@ -73,6 +73,7 @@ async def verify_claim(
             context_claims=request.context_claims or [],
             include_social=request.include_social,
             enabled_source_groups=request.enabled_source_groups or None,
+            deep_nli=request.deep_nli,
         )
     except Exception as exc:
         logger.exception("VerifyClaimService.verify() failed for claim='%s'", claim[:80])

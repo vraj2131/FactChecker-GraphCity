@@ -10,7 +10,7 @@ const STEPS = [
 // The backend is a single request with no progress stream, so steps advance
 // on timings that mirror the real pipeline phases (retrieval dominates).
 // The final step holds until the response actually arrives.
-const STEP_ADVANCE_MS = [9000, 8000];
+const STEP_ADVANCE_MS = [7000, 6000];
 
 const RING_R = 62;
 const RING_C = 2 * Math.PI * RING_R;

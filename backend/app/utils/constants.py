@@ -220,6 +220,11 @@ NLI_BATCH_SIZE = 8
 # Stronger confirmation model (FEVER+ANLI-trained) used in cascade to verify supports/refutes
 NLI_CONFIRM_MODEL_NAME = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
 
+# Fast-model supports/refutes results at or above this confidence skip the
+# confirm-model re-check — they almost never flip, and re-checking them was
+# pure added latency.
+NLI_CONFIRM_SKIP_CONFIDENCE = 0.85
+
 # Minimum claim-relevance score for a snippet to be kept after expansion.
 # Requires at least 2 meaningful claim terms to overlap (single-term matches score ~0.06).
 SNIPPET_MIN_RELEVANCE_SCORE = 0.08

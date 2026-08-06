@@ -8,23 +8,14 @@ const DEMO_CLAIMS = [
   'Amazon stock rose by 5% today.',
 ];
 
-const SOURCE_GROUPS = [
-  { key: 'wikipedia',  label: 'Wikipedia',          desc: 'FAISS index + live Wikipedia',      alwaysOn: true  },
-  { key: 'live_news',  label: 'Live News',           desc: 'Guardian · NewsAPI · GDELT'                         },
-  { key: 'factcheck',  label: 'Fact-Checkers',       desc: 'Professional fact-check sources'                    },
-  { key: 'scientific', label: 'Scientific',          desc: 'OpenAlex · PubMed · arXiv'                         },
-  { key: 'financial',  label: 'Financial / Crypto',  desc: 'FRED · SEC · CoinGecko · World Bank'               },
-  { key: 'web_search', label: 'Web Search',          desc: 'DuckDuckGo — may slow results'                      },
-  { key: 'social',     label: 'Social Media',        desc: 'Reddit + Bluesky'                                   },
-];
-
-const DEFAULT_GROUPS = ['wikipedia', 'live_news', 'factcheck', 'scientific', 'financial'];
+import { SOURCE_GROUPS, DEFAULT_GROUPS, isDefaultSelection } from '../utils/sourceGroups';
 
 export default function ClaimInputPanel({ onVerify, loading = false, claimText = '' }) {
   const [value, setValue] = useState(claimText);
   const [focused, setFocused] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [enabledGroups, setEnabledGroups] = useState(new Set(DEFAULT_GROUPS));
+  const [deepNli, setDeepNli] = useState(true);
 
   useEffect(() => {
     if (claimText) setValue(claimText);
@@ -38,9 +29,7 @@ export default function ClaimInputPanel({ onVerify, loading = false, claimText =
     // graphCache fast-path (it only engages when enabledSourceGroups is
     // falsy), forcing every claim to re-hit live retrievers even when
     // revisiting one already verified this session.
-    const isDefault = enabledGroups.size === DEFAULT_GROUPS.length
-      && DEFAULT_GROUPS.every((g) => enabledGroups.has(g));
-    onVerify?.(trimmed, isDefault ? null : [...enabledGroups]);
+    onVerify?.(trimmed, isDefaultSelection(enabledGroups) ? null : [...enabledGroups], deepNli);
   };
 
   const handleKeyDown = (e) => {
@@ -87,17 +76,32 @@ export default function ClaimInputPanel({ onVerify, loading = false, claimText =
         </button>
       </div>
 
-      {/* Sources toggle */}
+      {/* Sources toggle + deep NLI switch */}
       <div className="sources-row">
-        <button
-          className="sources-toggle-btn"
-          onClick={() => setSourcesOpen(v => !v)}
-          disabled={loading}
-        >
-          {sourcesOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-          Sources
-          <span className="sources-active-count">{enabledGroups.size} / {SOURCE_GROUPS.length}</span>
-        </button>
+        <div className="sources-controls-line">
+          <button
+            className="sources-toggle-btn"
+            onClick={() => setSourcesOpen(v => !v)}
+            disabled={loading}
+          >
+            {sourcesOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+            Sources
+            <span className="sources-active-count">{enabledGroups.size} / {SOURCE_GROUPS.length}</span>
+          </button>
+          <label
+            className="deep-nli-toggle"
+            title="Re-check borderline stance labels with a stronger NLI model (more accurate, a few seconds slower)"
+          >
+            <input
+              type="checkbox"
+              className="source-group-check"
+              checked={deepNli}
+              disabled={loading}
+              onChange={() => setDeepNli(v => !v)}
+            />
+            Deep NLI
+          </label>
+        </div>
 
         {sourcesOpen && (
           <div className="sources-panel">

@@ -9,7 +9,8 @@ to build the GraphResponse.
 """
 
 import logging
-import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,7 +25,6 @@ from backend.app.services.evidence_expansion_service import EvidenceExpansionSer
 from backend.app.services.ranking_service import RankingService
 from backend.app.services.retrieval_service import RetrievalService
 from backend.app.services.stance_service import StanceService
-from backend.app.utils.concurrency import run_concurrent
 from backend.app.utils.constants import (
     CONTEXT_EXPANSION_ENABLED,
     DEFAULT_RETRIEVAL_CACHE_DIR,
@@ -102,6 +102,7 @@ class VerifyClaimService:
         context_claims: Optional[List] = None,
         include_social: bool = False,
         enabled_source_groups: Optional[List[str]] = None,
+        deep_nli: bool = True,
     ) -> VerifyClaimResult:
         """
         Run the full pipeline for a single claim.
@@ -109,11 +110,15 @@ class VerifyClaimService:
         Args:
             claim_text:  The claim to fact-check.
             use_cache:   Whether to use cached retrieval + LLM results.
+            deep_nli:    If True, borderline NLI supports/refutes labels are
+                         re-checked by the stronger confirm model. If False,
+                         only the fast NLI model runs (faster, less accurate).
 
         Returns:
             VerifyClaimResult with all pipeline outputs populated.
         """
         claim_text = claim_text.strip()
+        t_start = time.perf_counter()
         logger.info("VerifyClaimService: verifying claim='%s'", claim_text[:80])
 
         # Resolve active source groups
@@ -128,45 +133,31 @@ class VerifyClaimService:
             if grp in active_groups:
                 _active_retriever_sources.extend(srcs)
 
-        # Pre-warm the context-expansion query-generation cache concurrently
-        # with retrieval below (Feature 13) — it's a single Groq call that
-        # only needs claim_text, so overlapping it with the much slower
-        # retrieval phase costs nothing. By the time step 1c runs,
-        # generate_context_queries() will be a cache hit.
-        if self._context_expansion is not None and CONTEXT_EXPANSION_ENABLED:
-            threading.Thread(
-                target=self._context_expansion.generate_context_queries,
-                args=(claim_text,),
-                kwargs={"use_cache": use_cache},
-                daemon=True,
-            ).start()
+        # ── Launch ALL retrieval work concurrently ──────────────────────────
+        # Main retrieval, social, domain, and context expansion only need
+        # claim_text, so nothing has to wait for anything else. Previously
+        # these ran as sequential waves (main → social → domain → context),
+        # stacking their timeout ceilings.
+        executor = ThreadPoolExecutor(max_workers=10)
+        _EXTRAS_DEADLINE_S = 14.0   # absolute budget for the side retrievals
+        extra_futures: Dict[str, Future] = {}
 
-        # 1. Retrieve direct evidence from selected sources
-        sources = self._retrieval.retrieve(
+        fut_main = executor.submit(
+            self._retrieval.retrieve,
             claim_text,
             max_results=self._max_retrieval_results,
             use_cache=use_cache,
             sources=_active_retriever_sources if _active_retriever_sources else None,
         )
-        logger.info("VerifyClaimService: retrieved %d direct sources", len(sources))
 
-        # 1a. Social media retrieval (gated by 'social' group or include_social flag)
         if _include_social:
             from backend.app.retrieval.reddit_retriever import RedditRetriever
             from backend.app.retrieval.bluesky_retriever import BlueskyRetriever
-            existing_ids = {s.source_id for s in sources}
-            social_tasks = [
-                (retriever.source_name, lambda r=retriever: r.retrieve(claim_text, max_results=5))
-                for retriever in [RedditRetriever(), BlueskyRetriever()]
-            ]
-            for _, results in run_concurrent(social_tasks, max_workers=2, timeout=8.0):
-                for src in results:
-                    if src.source_id not in existing_ids:
-                        sources.append(src)
-                        existing_ids.add(src.source_id)
-            logger.info("VerifyClaimService: %d sources after social media retrieval", len(sources))
+            for retriever in (RedditRetriever(), BlueskyRetriever()):
+                extra_futures[retriever.source_name] = executor.submit(
+                    retriever.retrieve, claim_text, max_results=5
+                )
 
-        # 1b. Domain-specific retrieval (Feature 11) — gated by 'scientific'/'financial' groups
         from backend.app.utils.domain_router import detect_domains
         _allowed_domains: set = set()
         for grp, domain_tags in self._GROUP_TO_DOMAINS.items():
@@ -210,66 +201,84 @@ class VerifyClaimService:
                     fromlist=["WorldBankRetriever"],
                 ).WorldBankRetriever(),
             }
-            existing_ids = {s.source_id for s in sources}
             retriever_keys: set = set()
             for domain in sorted(domains):
                 retriever_keys.update(_DOMAIN_RETRIEVERS.get(domain, []))
+            for key in retriever_keys:
+                extra_futures[key] = executor.submit(
+                    lambda k=key: _RETRIEVER_MAP[k]().retrieve(claim_text, max_results=5)
+                )
 
-            def _run_domain_retriever(key):
-                return _RETRIEVER_MAP[key]().retrieve(claim_text, max_results=5)
-
-            domain_tasks = [
-                (key, lambda k=key: _run_domain_retriever(k)) for key in retriever_keys
-            ]
-            for _, results in run_concurrent(domain_tasks, max_workers=6, timeout=10.0):
-                for src in results:
-                    if src.source_id not in existing_ids:
-                        sources.append(src)
-                        existing_ids.add(src.source_id)
-            logger.info(
-                "VerifyClaimService: %d sources after domain retrieval (domains=%s)",
-                len(sources),
-                domains,
-            )
-
-        # 1c. Context expansion — contributing-factor sources (optional)
         if self._context_expansion is not None and CONTEXT_EXPANSION_ENABLED:
-            context_sources = self._context_expansion.retrieve_context_sources(
-                claim_text, self._retrieval, use_cache=use_cache
+            extra_futures["context_expansion"] = executor.submit(
+                self._context_expansion.retrieve_context_sources,
+                claim_text,
+                self._retrieval,
+                use_cache=use_cache,
             )
-            if context_sources:
-                existing_ids = {s.source_id for s in sources}
-                added = 0
-                for cs in context_sources:
-                    if cs.source_id not in existing_ids:
-                        sources.append(cs)
-                        existing_ids.add(cs.source_id)
-                        added += 1
-                logger.info(
-                    "VerifyClaimService: added %d context sources (%d already present)",
-                    added, len(context_sources) - added,
-                )
-                # Re-rank the merged pool so high-trust context sources
-                # (Guardian/NewsAPI relevance_score=1.0, trust_score=0.82-0.88)
-                # aren't buried behind low-relevance FAISS sources at the top.
-                sources.sort(
-                    key=lambda s: s.trust_score * s.relevance_score,
-                    reverse=True,
-                )
-                # Re-apply entity filter after context expansion merge —
-                # context sources bypass retrieval_service's hard filter.
-                _anchors, _ = extract_claim_entities(claim_text)
-                if _anchors and len(sources) > 3:
-                    _filtered = [
-                        s for s in sources
-                        if anchor_present(_anchors, f"{s.title or ''} {s.snippet or ''}")
-                    ]
-                    if len(_filtered) >= 3:
-                        logger.info(
-                            "Post-expansion entity filter: removed %d off-topic sources",
-                            len(sources) - len(_filtered),
-                        )
-                        sources = _filtered
+
+        # ── Main retrieval result ───────────────────────────────────────────
+        try:
+            sources = fut_main.result(timeout=30.0)
+        except Exception as exc:
+            executor.shutdown(wait=False)
+            raise RuntimeError(f"Main retrieval failed: {exc}") from exc
+        logger.info(
+            "VerifyClaimService: retrieved %d direct sources (%.1fs)",
+            len(sources), time.perf_counter() - t_start,
+        )
+
+        # ── NLI overlap: classify main sources NOW, while the side
+        # retrievals are still running in the pool. Results land in the
+        # per-(claim,snippet) NLI cache, so the final classify pass over the
+        # merged pool re-uses them for free.
+        if sources:
+            self._stance.classify(claim_text, sources, deep=deep_nli)
+            logger.info(
+                "VerifyClaimService: pre-classified %d main sources (%.1fs)",
+                len(sources), time.perf_counter() - t_start,
+            )
+
+        # ── Collect side retrievals (most finished during NLI above) ────────
+        context_added = False
+        existing_ids = {s.source_id for s in sources}
+        for label, fut in extra_futures.items():
+            remaining = max(0.5, _EXTRAS_DEADLINE_S - (time.perf_counter() - t_start))
+            try:
+                results = fut.result(timeout=remaining)
+            except Exception as exc:
+                logger.warning("VerifyClaimService: '%s' retrieval skipped: %s", label, exc)
+                continue
+            added = 0
+            for src in results or []:
+                if src.source_id not in existing_ids:
+                    sources.append(src)
+                    existing_ids.add(src.source_id)
+                    added += 1
+            if added and label == "context_expansion":
+                context_added = True
+            logger.info("VerifyClaimService: '%s' added %d sources", label, added)
+        executor.shutdown(wait=False)
+
+        # Context sources bypass retrieval_service's ranking + hard entity
+        # filter, so re-sort and re-filter the merged pool when they arrived.
+        if context_added:
+            sources.sort(
+                key=lambda s: s.trust_score * s.relevance_score,
+                reverse=True,
+            )
+            _anchors, _ = extract_claim_entities(claim_text)
+            if _anchors and len(sources) > 3:
+                _filtered = [
+                    s for s in sources
+                    if anchor_present(_anchors, f"{s.title or ''} {s.snippet or ''}")
+                ]
+                if len(_filtered) >= 3:
+                    logger.info(
+                        "Post-expansion entity filter: removed %d off-topic sources",
+                        len(sources) - len(_filtered),
+                    )
+                    sources = _filtered
 
         if not sources:
             logger.warning("VerifyClaimService: no sources retrieved for claim='%s'", claim_text[:80])
@@ -301,9 +310,16 @@ class VerifyClaimService:
                 llm_input_sources=[],
             )
 
-        # 2. NLI stance classification
-        classified_sources, nli_results = self._stance.classify(claim_text, sources)
-        logger.info("VerifyClaimService: NLI classified %d sources", len(classified_sources))
+        # 2. NLI stance classification over the final merged pool. Main
+        # sources were pre-classified above and hit the NLI cache here; only
+        # sources added by the side retrievals need fresh inference.
+        classified_sources, nli_results = self._stance.classify(
+            claim_text, sources, deep=deep_nli
+        )
+        logger.info(
+            "VerifyClaimService: NLI classified %d sources (%.1fs)",
+            len(classified_sources), time.perf_counter() - t_start,
+        )
 
         # 3. LLM classification (top N sources only)
         llm_input = classified_sources[: self._llm_input_sources]

@@ -37,7 +37,7 @@ export default function App() {
   const handleMouseMove  = useCallback((pos)  => setMousePos(pos),      []);
   const handlePanelClose = useCallback(()     => setSelectedNode(null), []);
 
-  const handleVerify = useCallback(async (claimText, enabledSourceGroups = null) => {
+  const handleVerify = useCallback(async (claimText, enabledSourceGroups = null, deepNli = true) => {
     setCurrentClaim(claimText);
     setError(null);
     setSelectedNode(null);
@@ -47,8 +47,10 @@ export default function App() {
     // clicking it in the claim-chain banner) renders instantly from cache
     // instead of re-running the pipeline. Skipped when the user explicitly
     // customized source groups for this run, since that could change results.
+    // Deep vs fast NLI produce different results, so they cache separately.
+    const cacheKey = `${deepNli ? 'deep' : 'fast'}::${claimText}`;
     if (!enabledSourceGroups) {
-      const cached = graphCacheRef.current.get(claimText);
+      const cached = graphCacheRef.current.get(cacheKey);
       if (cached) {
         setGraphData(cached);
         setVerificationHistory(prev => pushClaimHistory(prev, buildHistoryEntry(claimText, cached)));
@@ -58,9 +60,9 @@ export default function App() {
 
     setLoading(true);
     try {
-      const graph = await verifyClaim(claimText, decayContextForLLM(verificationHistory), enabledSourceGroups);
+      const graph = await verifyClaim(claimText, decayContextForLLM(verificationHistory), enabledSourceGroups, deepNli);
       setGraphData(graph);
-      graphCacheRef.current.set(claimText, graph);
+      graphCacheRef.current.set(cacheKey, graph);
       setVerificationHistory(prev => pushClaimHistory(prev, buildHistoryEntry(claimText, graph)));
     } catch (err) {
       setError(err.message ?? 'Pipeline error — check backend logs.');
