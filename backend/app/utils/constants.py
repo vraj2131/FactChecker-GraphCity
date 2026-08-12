@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 # Project root resolved from this file's location so all paths work
@@ -264,8 +265,14 @@ LLM_CACHE_NAMESPACE = "llm_outputs"
 # Prompt version — bump this to bust the LLM cache when the prompt changes
 LLM_PROMPT_VERSION = "v4"
 
-# Max sources shown to the LLM — 20 keeps request under Groq free-tier 6000 TPM limit
-LLM_MAX_INPUT_SOURCES = 20
+# Max sources shown to the LLM. 20 did NOT fit the Groq free-tier 6000 TPM
+# budget as the comment here once claimed: 20 sources is ~3470 prompt tokens,
+# leaving under 2530 for the response, which truncated the JSON mid-object on
+# source-rich claims. 14 sources (~2850 tokens) leaves room for a 3000-token
+# response inside the same limit. Sources beyond this still reach the graph as
+# Tier-2 extended nodes, so evidence isn't discarded — only the LLM's direct
+# classification window is narrowed.
+LLM_MAX_INPUT_SOURCES = 14
 
 # -------------------------------------------------------------------
 # Phase 8b: Groq API (cloud LLM — free tier, Llama 3.1 quality)
@@ -275,11 +282,38 @@ LLM_MAX_INPUT_SOURCES = 20
 GROQ_MODEL_NAME = "llama-3.1-8b-instant"       # fast, free, Llama 3.1 8B quality
 GROQ_PROD_MODEL_NAME = "llama-3.3-70b-versatile"  # best quality on Groq free tier
 
-# Max tokens for the JSON response — 2048 fits 20 sources + node_links comfortably
-GROQ_MAX_TOKENS = 2048
+# Max tokens for the JSON response.
+#
+# Groq counts (input + max_tokens) against the tokens-per-minute budget, so
+# this is a *reservation*, not just a ceiling — set it too high and requests
+# are rejected outright with HTTP 413 "Request too large". Set it too low and
+# the JSON truncates mid-object, which fails unrecoverably as
+# "failed to parse JSON after retry".
+#
+# Budget on the free tier is 6000 TPM. With LLM_MAX_INPUT_SOURCES=14 the
+# prompt runs ~2850 tokens, so 3000 here totals ~5850 — inside the limit with
+# room for the response to complete.
+GROQ_MAX_TOKENS = 3000
 
 # Cache namespace for Groq outputs
 GROQ_CACHE_NAMESPACE = "groq_outputs"
+
+# --- Groq rate-limit handling ---
+# The SDK's own retry backoff caps at single-digit seconds, which is far short
+# of the ~60s a Groq tokens-per-minute window needs to clear. These drive an
+# explicit backoff loop in GroqLLMModel._call_api on top of the SDK retries.
+GROQ_SDK_MAX_RETRIES = 5
+GROQ_REQUEST_TIMEOUT_S = 60.0
+GROQ_BACKOFF_BASE_S = 8.0      # 8, 16, 32, 64, then capped
+GROQ_BACKOFF_MAX_S = 90.0
+GROQ_BACKOFF_JITTER_S = 5.0    # decorrelates concurrent retries
+# Interactive /verify-claim requests should fail fast rather than hang for
+# minutes; long unattended batch runs export a higher value.
+GROQ_RATE_LIMIT_MAX_ATTEMPTS = int(os.getenv("GROQ_RATE_LIMIT_MAX_ATTEMPTS", "2"))
+# A remaining-token budget at/below this with a multi-hour reset means the
+# DAILY cap is spent, not the per-minute one — worth sleeping until reset
+# instead of burning retry attempts.
+GROQ_DAILY_QUOTA_RESET_MIN_S = 900.0   # 15 min
 
 # -------------------------------------------------------------------
 # Phase 13: Inter-node edges

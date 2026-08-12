@@ -1,14 +1,22 @@
 import json
 import logging
 import os
+import random
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
 import torch
 from dotenv import load_dotenv
-from groq import Groq
+from groq import (
+    APIConnectionError,
+    APITimeoutError,
+    Groq,
+    InternalServerError,
+    RateLimitError,
+)
 from huggingface_hub import login as hf_login
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -23,9 +31,16 @@ from backend.app.schemas.source_schema import Source
 from backend.app.services.cache_service import CacheService
 from backend.app.utils.constants import (
     DEFAULT_CACHE_DIR,
+    GROQ_BACKOFF_BASE_S,
+    GROQ_BACKOFF_JITTER_S,
+    GROQ_BACKOFF_MAX_S,
     GROQ_CACHE_NAMESPACE,
+    GROQ_DAILY_QUOTA_RESET_MIN_S,
     GROQ_MAX_TOKENS,
     GROQ_MODEL_NAME,
+    GROQ_RATE_LIMIT_MAX_ATTEMPTS,
+    GROQ_REQUEST_TIMEOUT_S,
+    GROQ_SDK_MAX_RETRIES,
     LLM_CACHE_NAMESPACE,
     LLM_DEVICE,
     LLM_FALLBACK_MODEL_NAME,
@@ -40,6 +55,81 @@ from backend.app.utils.hashing import build_cache_key, stable_hash_object
 _CACHE_BASE = Path(__file__).resolve().parent.parent.parent.parent / "data" / "cache"
 
 logger = logging.getLogger(__name__)
+
+
+class GroqDailyQuotaExhausted(Exception):
+    """Raised when Groq's per-DAY token budget is spent (not the per-minute one).
+
+    Carries `reset_seconds` so a long-running batch can sleep until the quota
+    window rolls over instead of burning its retry attempts on a wait that
+    cannot succeed for hours.
+    """
+
+    def __init__(self, message: str, reset_seconds: float) -> None:
+        super().__init__(message)
+        self.reset_seconds = reset_seconds
+
+
+def _parse_duration(value: str) -> Optional[float]:
+    """Parse Groq duration strings like '7.66s', '2m59.56s', '1h2m3s', '500ms'."""
+    if not value:
+        return None
+    text = str(value).strip().lower()
+    # Bare number => seconds (the plain `retry-after` form)
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    matches = re.findall(r"(\d+(?:\.\d+)?)\s*(ms|h|m|s)", text)
+    if not matches:
+        return None
+    unit_seconds = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+    return sum(float(num) * unit_seconds[unit] for num, unit in matches)
+
+
+def _rate_limit_wait(exc: Exception) -> tuple[Optional[float], bool]:
+    """Extract (wait_seconds, is_daily) from a Groq RateLimitError.
+
+    Groq reports its own reset window in response headers; honouring that is
+    what turns a hard failure into a short, correctly-sized pause. Returns
+    (None, False) when no usable hint is present so the caller falls back to
+    exponential backoff.
+    """
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+
+    def _get(name: str) -> str:
+        try:
+            return headers.get(name) or ""
+        except Exception:
+            return ""
+
+    waits = []
+    for header in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        parsed = _parse_duration(_get(header))
+        if parsed is not None:
+            waits.append(parsed)
+    retry_after_ms = _parse_duration(_get("retry-after-ms"))
+    if retry_after_ms is not None:
+        waits.append(retry_after_ms / 1000.0 if retry_after_ms > 1000 else retry_after_ms)
+
+    if not waits:
+        # Fall back to the message body, which usually restates the window.
+        parsed = _parse_duration_from_message(str(exc))
+        if parsed is None:
+            return None, False
+        waits.append(parsed)
+
+    wait = max(waits)
+    # A multi-minute reset means the daily budget is gone, not the per-minute one.
+    is_daily = wait >= GROQ_DAILY_QUOTA_RESET_MIN_S or "per day" in str(exc).lower()
+    return wait, is_daily
+
+
+def _parse_duration_from_message(message: str) -> Optional[float]:
+    """Pull a 'try again in 2m59.56s' style hint out of an error message."""
+    match = re.search(r"try again in\s+([0-9hms.\s]+)", message, re.IGNORECASE)
+    return _parse_duration(match.group(1)) if match else None
+
 
 _VALID_CLASSIFICATIONS = {
     "direct_support",
@@ -379,6 +469,120 @@ def _extract_json_str(text: str) -> str:
     return text[start: end + 1]
 
 
+def _strip_trailing_commas(text: str) -> str:
+    """Remove trailing commas before a closing brace/bracket.
+
+    `[{...}, {...},]` is valid in JS but not JSON, and small models emit it
+    routinely — it was the single most common cause of hard classification
+    failures. Commas inside string literals are left alone.
+    """
+    out: List[str] = []
+    in_string = False
+    escaped = False
+
+    for i, ch in enumerate(text):
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            continue
+
+        if ch == ",":
+            # Look ahead past whitespace: a closer here means this comma is stray.
+            j = i + 1
+            while j < len(text) and text[j] in " \t\r\n":
+                j += 1
+            if j < len(text) and text[j] in "}]":
+                continue   # drop it
+        out.append(ch)
+
+    return "".join(out)
+
+
+def _repair_truncated_json(text: str) -> Optional[str]:
+    """Best-effort repair of a response the model cut off mid-object.
+
+    When generation stops early, the trailing text is a partial object and
+    `_extract_json_str`'s rfind("}") latches onto an *inner* closing brace,
+    yielding malformed JSON. Rather than lose the whole classification, walk
+    the text tracking string/escape state and bracket depth, rewind to the
+    last completed element, and close the still-open containers.
+
+    Returns repaired JSON text, or None if nothing salvageable was found.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    stack: List[str] = []
+    in_string = False
+    escaped = False
+    last_safe: Optional[int] = None   # index just past the last complete element
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if not stack:
+                break
+            stack.pop()
+            # A complete element just closed while still inside a container.
+            if stack:
+                last_safe = i + 1
+        elif ch == "," and len(stack) <= 2:
+            last_safe = i   # comma at shallow depth: everything before is whole
+
+    if last_safe is None or not stack:
+        return None
+
+    salvaged = text[start:last_safe].rstrip().rstrip(",")
+
+    # Re-derive what remains open after the truncation point.
+    stack = []
+    in_string = False
+    escaped = False
+    for ch in salvaged:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]" and stack:
+            stack.pop()
+
+    closers = "".join("}" if opener == "{" else "]" for opener in reversed(stack))
+    return salvaged + closers
+
+
 def _parse_llm_json(raw_output: str, num_sources: int) -> LLMResult:
     """Parse raw model output string into an LLMResult (shared by local + Groq)."""
     json_str = _extract_json_str(raw_output)
@@ -386,7 +590,33 @@ def _parse_llm_json(raw_output: str, num_sources: int) -> LLMResult:
     try:
         data = json.loads(json_str)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"JSON decode error: {exc}") from exc
+        data = None
+
+        # Most failures are a stray trailing comma before a closer — cheap to fix.
+        cleaned = _strip_trailing_commas(json_str)
+        if cleaned != json_str:
+            try:
+                data = json.loads(cleaned)
+                logger.info("Recovered LLM JSON by stripping trailing comma(s).")
+            except json.JSONDecodeError:
+                data = None
+
+        # Otherwise the response was cut off mid-object; salvage what completed
+        # rather than discarding an expensive call outright.
+        if data is None:
+            repaired = _repair_truncated_json(_strip_trailing_commas(raw_output))
+            if repaired is not None:
+                try:
+                    data = json.loads(repaired)
+                    logger.warning(
+                        "Recovered truncated LLM JSON: salvaged %d of %d chars",
+                        len(repaired), len(json_str),
+                    )
+                except json.JSONDecodeError:
+                    data = None
+
+        if data is None:
+            raise ValueError(f"JSON decode error: {exc}") from exc
 
     source_classifications: List[SourceClassification] = []
     for entry in data.get("sources", []):
@@ -508,7 +738,11 @@ class GroqLLMModel:
                 "GROQ_API_KEY is not set. Add it to your .env file or environment. "
                 "Get a free key at https://console.groq.com"
             )
-        self._client = Groq(api_key=resolved_key)
+        self._client = Groq(
+            api_key=resolved_key,
+            max_retries=GROQ_SDK_MAX_RETRIES,
+            timeout=GROQ_REQUEST_TIMEOUT_S,
+        )
 
         # Reuse same system prompt as local model
         prompt_path = (
@@ -586,19 +820,75 @@ class GroqLLMModel:
         return result
 
     def _call_api(self, user_message: str) -> str:
-        """Send messages to Groq API and return the assistant reply text."""
+        """Send messages to Groq API and return the assistant reply text.
+
+        Retries on rate limits and transient errors. Groq's own reset hint is
+        honoured when present, otherwise exponential backoff with jitter.
+        A spent DAILY token budget raises GroqDailyQuotaExhausted immediately
+        so callers can sleep until rollover rather than retrying pointlessly.
+        """
         print(f"[Groq] Generating... (model={self.model_name}, max_tokens={GROQ_MAX_TOKENS})")
-        response = self._client.chat.completions.create(
-            model=self.model_name,
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            max_tokens=GROQ_MAX_TOKENS,
-            temperature=0.0,
-        )
-        print("[Groq] Generation complete.")
-        return response.choices[0].message.content or ""
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(GROQ_RATE_LIMIT_MAX_ATTEMPTS):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    max_tokens=GROQ_MAX_TOKENS,
+                    temperature=0.0,
+                )
+                choice = response.choices[0]
+                finish_reason = getattr(choice, "finish_reason", None)
+                if finish_reason == "length":
+                    logger.warning(
+                        "Groq stopped at max_tokens (%d) — response will be truncated. "
+                        "Consider lowering LLM_MAX_INPUT_SOURCES.", GROQ_MAX_TOKENS,
+                    )
+                print("[Groq] Generation complete.")
+                return choice.message.content or ""
+
+            except RateLimitError as exc:
+                last_exc = exc
+                hinted_wait, is_daily = _rate_limit_wait(exc)
+                if is_daily:
+                    logger.error(
+                        "Groq DAILY token quota exhausted — resets in %.0fs (%.1fh)",
+                        hinted_wait or 0.0, (hinted_wait or 0.0) / 3600.0,
+                    )
+                    raise GroqDailyQuotaExhausted(
+                        f"Groq daily token quota exhausted: {exc}",
+                        reset_seconds=hinted_wait or 3600.0,
+                    ) from exc
+
+                wait = hinted_wait if hinted_wait is not None else min(
+                    GROQ_BACKOFF_BASE_S * (2 ** attempt), GROQ_BACKOFF_MAX_S
+                )
+                wait = min(wait, GROQ_BACKOFF_MAX_S) + random.uniform(0, GROQ_BACKOFF_JITTER_S)
+                if attempt == GROQ_RATE_LIMIT_MAX_ATTEMPTS - 1:
+                    break
+                logger.warning(
+                    "Groq 429 (attempt %d/%d) — sleeping %.1fs",
+                    attempt + 1, GROQ_RATE_LIMIT_MAX_ATTEMPTS, wait,
+                )
+                time.sleep(wait)
+
+            except (APIConnectionError, APITimeoutError, InternalServerError) as exc:
+                last_exc = exc
+                if attempt == GROQ_RATE_LIMIT_MAX_ATTEMPTS - 1:
+                    break
+                wait = min(GROQ_BACKOFF_BASE_S * (2 ** attempt), GROQ_BACKOFF_MAX_S)
+                logger.warning(
+                    "Groq transient error %s (attempt %d/%d) — sleeping %.1fs",
+                    type(exc).__name__, attempt + 1, GROQ_RATE_LIMIT_MAX_ATTEMPTS, wait,
+                )
+                time.sleep(wait)
+
+        assert last_exc is not None
+        raise last_exc
 
 
 _SNIPPET_MAX_CHARS = 300   # ~75 tokens per source — keeps 20 sources under 6000 TPM

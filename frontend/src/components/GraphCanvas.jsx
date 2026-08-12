@@ -289,6 +289,31 @@ const GraphCanvas = forwardRef(function GraphCanvas({ graphJson, onNodeHover, on
     onNodeSelect?.(null);
   }, [onNodeSelect]);
 
+  // ── Automation hook (dev server only) ────────────────────────────────────
+  // The batch screenshot harness needs to select the main claim node
+  // deterministically. Clicking a canvas pixel isn't reliable — the layout is
+  // still converging, the camera auto-orbits, and a miss silently lands on the
+  // background. Routing through handleNodeClick keeps the result identical to
+  // a real click (selection + orbit pause + camera fly).
+  //
+  // `import.meta.env.DEV` is replaced with the literal `false` by `vite build`,
+  // so this whole block is dead-code-eliminated from production bundles.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
+    window.__factgraph = {
+      ready: true,
+      nodeIds: () => graphData.nodes.map((n) => n.id),
+      selectNode: (nodeId) => {
+        const node = graphData.nodes.find((n) => n.id === nodeId);
+        if (!node) return false;
+        handleNodeClick(node);
+        return true;
+      },
+      freezeCamera: () => pauseOrbit(),
+    };
+    return () => { delete window.__factgraph; };
+  }, [graphData, handleNodeClick, pauseOrbit]);
+
   // ── Snapshot ─────────────────────────────────────────────────────────────
   // Force-render one frame then read the canvas. preserveDrawingBuffer keeps
   // the WebGL buffer alive so toBlob() reads actual content, not a cleared buffer.
