@@ -23,7 +23,9 @@ from typing import Any, Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
-MAX_ATTEMPTS = 3
+# Overridable so an operator can give stubborn claims another pass after
+# fixing the cause of their failure, without editing code.
+MAX_ATTEMPTS = int(os.getenv("HARNESS_MAX_ATTEMPTS", "3"))
 
 # Retrievers whose sustained absence signals a spent quota rather than a
 # genuinely evidence-free claim.
@@ -124,6 +126,15 @@ _PERMANENT_MESSAGE_HINTS = (
     "cannot be empty",
 )
 
+# Checked BEFORE the permanent hints. An empty completion is a model hiccup,
+# not a defect in the claim: the reasoning-style models (gpt-oss-*) sometimes
+# spend their whole token budget on internal reasoning and return no content.
+# Another model, or the same one on a retry, handles it fine.
+_RETRYABLE_MESSAGE_HINTS = (
+    "no json object found in model output.\nraw output: ",
+    "no json object found in model output. raw output: ",
+)
+
 
 def classify_error(exc: BaseException) -> str:
     """Return "retryable" or "permanent".
@@ -134,6 +145,9 @@ def classify_error(exc: BaseException) -> str:
     name = type(exc).__name__
     message = str(exc).lower()
 
+    # An empty completion looks like a parse failure but is worth retrying.
+    if any(message.rstrip().endswith(h.rstrip()) for h in _RETRYABLE_MESSAGE_HINTS):
+        return "retryable"
     if any(hint in message for hint in _PERMANENT_MESSAGE_HINTS):
         return "permanent"
     if name in _PERMANENT_TYPES:
