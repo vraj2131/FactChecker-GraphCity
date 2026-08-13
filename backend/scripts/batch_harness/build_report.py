@@ -156,6 +156,31 @@ def build_pdf(run_dir: Path, records: List[Dict], shots: Dict[str, Dict],
     story.append(ret_table)
     story.append(Spacer(1, 12))
 
+    # Which LLM classified which claims. Records written before model rotation
+    # existed have no llm_model field and were all llama-3.1-8b-instant.
+    model_counts = Counter(
+        r.get("llm_model") or "llama-3.1-8b-instant" for r in ok_records
+    )
+    if len(model_counts) > 1:
+        m_rows = [["Classifier model", "Claims"]]
+        for name, count in model_counts.most_common():
+            m_rows.append([name, str(count)])
+        m_table = Table(m_rows, colWidths=[2.8 * inch, 1.4 * inch])
+        m_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFF8E1")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#B0BEC5")),
+        ]))
+        story.append(Paragraph("LLM classifier used per claim", styles["Heading3"]))
+        story.append(m_table)
+        story.append(Paragraph(
+            "Groq enforces a per-model daily token budget (500,000 for "
+            "llama-3.1-8b-instant, ~5,200 tokens per claim). The run rotated "
+            "across models as each budget was spent, so the corpus is <b>not</b> "
+            "classified by a single model — compare claims within a model group "
+            "rather than across groups.", note_style))
+        story.append(Spacer(1, 12))
+
     story.append(Paragraph("Run configuration caveats", styles["Heading3"]))
     story.append(Paragraph(
         "These results were produced under free-tier API constraints and are <b>not</b> "

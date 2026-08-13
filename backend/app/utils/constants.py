@@ -291,9 +291,14 @@ GROQ_PROD_MODEL_NAME = "llama-3.3-70b-versatile"  # best quality on Groq free ti
 # "failed to parse JSON after retry".
 #
 # Budget on the free tier is 6000 TPM. With LLM_MAX_INPUT_SOURCES=14 the
-# prompt runs ~2850 tokens, so 3000 here totals ~5850 — inside the limit with
-# room for the response to complete.
-GROQ_MAX_TOKENS = 3000
+# prompt runs ~2850 tokens.
+#
+# Because this is a reservation, over-sizing it burns daily budget that is
+# never used: measured responses for 14 sources run ~700-900 tokens (short
+# rationales, ~100 chars each), so 3000 reserved more than 3x what completes.
+# 1600 keeps comfortable headroom above the observed maximum while cutting
+# ~24% off the per-claim charge against the tokens-per-day cap.
+GROQ_MAX_TOKENS = 1600
 
 # Cache namespace for Groq outputs
 GROQ_CACHE_NAMESPACE = "groq_outputs"

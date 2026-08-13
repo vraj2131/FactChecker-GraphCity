@@ -10,7 +10,10 @@ set -uo pipefail
 
 PROJECT_DIR="/Users/vraj21/Desktop/Projects/Fact Checker"
 SESSION="factharness"
-RUN_DIR="$PROJECT_DIR/data/artifacts/batch_run_$(date +%Y%m%d)"
+# Newest existing run, not today's date — a run spanning midnight must not be
+# mistaken for "not started yet".
+RUN_DIR=$(ls -d "$PROJECT_DIR"/data/artifacts/batch_run_* 2>/dev/null | sort | tail -1)
+RUN_DIR="${RUN_DIR:-$PROJECT_DIR/data/artifacts/batch_run_$(date +%Y%m%d)}"
 
 # Finished or deliberately halted — nothing to do.
 [[ -f "$RUN_DIR/HARNESS_DONE"  ]] && exit 0

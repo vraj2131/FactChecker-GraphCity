@@ -21,7 +21,13 @@ export GROQ_RATE_LIMIT_MAX_ATTEMPTS=6
 export GROQ_MODEL_CHAIN="llama-3.3-70b-versatile,llama-3.1-8b-instant,openai/gpt-oss-120b"
 export TOKENIZERS_PARALLELISM=false
 
-RUN_DIR="${RUN_DIR:-data/artifacts/batch_run_$(date +%Y%m%d)}"
+# Reuse the newest existing run rather than keying off today's date — a run
+# that crosses midnight would otherwise restart into an empty directory and
+# redo every claim. Only start a fresh run when none exists.
+if [[ -z "${RUN_DIR:-}" ]]; then
+  RUN_DIR=$(ls -d data/artifacts/batch_run_* 2>/dev/null | sort | tail -1)
+  RUN_DIR="${RUN_DIR:-data/artifacts/batch_run_$(date +%Y%m%d)}"
+fi
 mkdir -p "$RUN_DIR/logs"
 
 echo "=============================================="
