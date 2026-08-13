@@ -81,8 +81,13 @@ ALL_SOURCE_GROUPS = [
 DEFAULT_MODEL_CHAIN = [
     "llama-3.3-70b-versatile",   # 12k TPM, highest quality
     "llama-3.1-8b-instant",      # 6k TPM, original model
-    "openai/gpt-oss-120b",       # 8k TPM, last resort
+    "openai/gpt-oss-120b",       # 8k TPM
+    "openai/gpt-oss-20b",        # 8k TPM, budget separate from the 120b
 ]
+# Rejected after testing on a real classification prompt:
+#   qwen/qwen3.6-27b   — emits <think> reasoning that breaks JSON parsing
+#   allam-2-7b         — truncates; classified 7 of 14 sources
+#   groq/compound[-mini] — routers onto the models above, no separate budget
 
 
 class ModelRotator:
