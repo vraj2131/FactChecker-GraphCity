@@ -17,6 +17,8 @@ export PYTHONUNBUFFERED=1
 # Batch runs should wait out rate limits rather than fail fast the way an
 # interactive /verify-claim request should.
 export GROQ_RATE_LIMIT_MAX_ATTEMPTS=6
+# Each model has its own tokens-per-day budget; rotate rather than idle.
+export GROQ_MODEL_CHAIN="llama-3.3-70b-versatile,llama-3.1-8b-instant,openai/gpt-oss-120b"
 export TOKENIZERS_PARALLELISM=false
 
 RUN_DIR="${RUN_DIR:-data/artifacts/batch_run_$(date +%Y%m%d)}"

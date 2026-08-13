@@ -168,6 +168,9 @@ def build_pdf(run_dir: Path, records: List[Dict], shots: Dict[str, Dict],
         "receive nothing from it.<br/>"
         "• <b>Reddit unavailable</b> — no API credentials configured; social evidence is "
         "Bluesky-only.<br/>"
+        "• <b>GDELT contributed nothing</b> — its API permits one request every 5 seconds "
+        "and rejects the pipeline's concurrent queries with HTTP 429. The retriever treats "
+        "that as an empty result, so its absence is silent rather than an error.<br/>"
         "• LLM classification window is the top 14 ranked sources; further sources still "
         "appear as second-tier graph nodes.",
         note_style))

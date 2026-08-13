@@ -18,16 +18,18 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import socket
 import sys
 import time
 from pathlib import Path
+from typing import Dict, List, Optional
 
 # Retriever calls occasionally hang on a socket connect/read with no client
 # timeout; a global default lets them fail fast instead of stalling the run.
 socket.setdefaulttimeout(30)
 
-from backend.app.models.llm_model import GroqDailyQuotaExhausted
+from backend.app.models.llm_model import GroqDailyQuotaExhausted, GroqLLMModel
 from backend.app.services.graph_builder_service import GraphBuilderService
 from backend.app.services.verify_claim_service import VerifyClaimService
 import backend.app.services.retrieval_service as retrieval_service
@@ -73,6 +75,56 @@ ALL_SOURCE_GROUPS = [
     "financial", "web_search", "social",
 ]
 
+# Each Groq model carries its OWN tokens-per-day budget, so when one is spent
+# the run rotates to the next rather than idling for hours. Ordered by
+# preference; all three were verified to emit strict JSON.
+DEFAULT_MODEL_CHAIN = [
+    "llama-3.3-70b-versatile",   # 12k TPM, highest quality
+    "llama-3.1-8b-instant",      # 6k TPM, original model
+    "openai/gpt-oss-120b",       # 8k TPM, last resort
+]
+
+
+class ModelRotator:
+    """Rotates through Groq models as each one's daily token budget runs out.
+
+    A model is parked when it reports TPD exhaustion and becomes eligible
+    again once its reported reset time passes. Only when every model is
+    parked does the caller need to wait.
+    """
+
+    def __init__(self, chain: List[str]) -> None:
+        self.chain = chain
+        self.index = 0
+        self.exhausted_until: Dict[str, float] = {}
+
+    @property
+    def current(self) -> str:
+        return self.chain[self.index]
+
+    def mark_exhausted(self, reset_seconds: float) -> None:
+        self.exhausted_until[self.current] = time.monotonic() + max(60.0, reset_seconds)
+
+    def _available(self, name: str) -> bool:
+        until = self.exhausted_until.get(name)
+        return until is None or time.monotonic() >= until
+
+    def rotate(self) -> Optional[str]:
+        """Move to the next usable model. Returns its name, or None if all parked."""
+        for offset in range(1, len(self.chain) + 1):
+            candidate = (self.index + offset) % len(self.chain)
+            if self._available(self.chain[candidate]):
+                self.index = candidate
+                return self.current
+        return None
+
+    def wait_seconds(self) -> float:
+        """Seconds until the earliest model frees up."""
+        if not self.exhausted_until:
+            return 60.0
+        soonest = min(self.exhausted_until.values())
+        return max(60.0, soonest - time.monotonic())
+
 
 def configure_services(verify_svc: VerifyClaimService) -> None:
     """Trim per-claim API fan-out so daily quotas survive 200 claims.
@@ -112,7 +164,15 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N claims")
     parser.add_argument("--pacing", type=float, default=PACING_FLOOR_S,
                         help=f"Seconds floor per claim cycle (default {PACING_FLOOR_S})")
+    parser.add_argument(
+        "--models",
+        default=os.getenv("GROQ_MODEL_CHAIN", ",".join(DEFAULT_MODEL_CHAIN)),
+        help="Comma-separated Groq model fallback chain (each has its own daily budget)",
+    )
     args = parser.parse_args()
+
+    model_chain = [m.strip() for m in args.models.split(",") if m.strip()]
+    rotator = ModelRotator(model_chain)
 
     run_dir = Path(args.run_dir)
     graphs_dir = run_dir / "graphs"
@@ -142,8 +202,10 @@ def main() -> int:
         return EXIT_OK
 
     logger.info("Loading models (NLI x2 + FAISS + Groq)...")
+    logger.info("LLM chain: %s (starting on %s)", model_chain, rotator.current)
     t_load = time.monotonic()
-    verify_svc = VerifyClaimService.build_default()
+    verify_svc = VerifyClaimService.build_default(groq_model=rotator.current)
+    verify_svc._llm = GroqLLMModel(model_name=rotator.current)
     configure_services(verify_svc)
     builder = GraphBuilderService()
     logger.info("Models ready in %.1fs", time.monotonic() - t_load)
@@ -174,15 +236,36 @@ def main() -> int:
             }
 
             try:
-                with claim_timeout(CLAIM_TIMEOUT_S):
-                    result = verify_svc.verify(
-                        claim,
-                        use_cache=True,
-                        include_social=True,
-                        enabled_source_groups=ALL_SOURCE_GROUPS,
-                        deep_nli=True,
-                    )
-                    graph = builder.build(result)
+                # Retry across models when one's daily token budget is spent.
+                # Model rotation does NOT consume a claim attempt — the claim
+                # never actually failed, we just ran out of budget on one model.
+                while True:
+                    try:
+                        with claim_timeout(CLAIM_TIMEOUT_S):
+                            result = verify_svc.verify(
+                                claim,
+                                use_cache=True,
+                                include_social=True,
+                                enabled_source_groups=ALL_SOURCE_GROUPS,
+                                deep_nli=True,
+                            )
+                            graph = builder.build(result)
+                        break
+                    except GroqDailyQuotaExhausted as exc:
+                        rotator.mark_exhausted(exc.reset_seconds)
+                        nxt = rotator.rotate()
+                        if nxt is None:
+                            wait = rotator.wait_seconds()
+                            logger.warning(
+                                "All %d models exhausted — waiting %.0fs for the "
+                                "earliest to reset", len(rotator.chain), wait,
+                            )
+                            sleep_until_quota_reset(wait, marker_path=paused_marker,
+                                                    safety_margin_s=60.0)
+                            nxt = rotator.rotate() or rotator.current
+                        logger.warning("Switching LLM model -> %s", nxt)
+                        verify_svc._llm = GroqLLMModel(model_name=nxt)
+                        cycle_start = time.monotonic()   # don't pace on wasted time
 
                 elapsed = time.monotonic() - cycle_start
                 graph_path = graphs_dir / f"{claim_id}.json"
@@ -209,6 +292,7 @@ def main() -> int:
                     "retrieval_notes": meta.retrieval_notes,
                     "graph_path": str(graph_path),
                     "quota_flags": flags,
+                    "llm_model": rotator.current,
                     "error_class": None,
                     "error_msg": None,
                 })
@@ -219,18 +303,6 @@ def main() -> int:
                     len(result.sources), meta.total_nodes, meta.total_edges, elapsed,
                     f" | FLAGS {flags}" if flags else "",
                 )
-
-            except GroqDailyQuotaExhausted as exc:
-                # Not a claim failure — the run simply cannot proceed until the
-                # token window rolls over. Record nothing terminal and retry
-                # this same claim after the pause.
-                manifest.append({**record, "status": "retryable", "finished_at": utc_now_iso(),
-                                 "elapsed_s": round(time.monotonic() - cycle_start, 1),
-                                 "error_class": "GroqDailyQuotaExhausted",
-                                 "error_msg": str(exc)[:400], "quota_flags": ["groq_daily_quota"]})
-                attempts[claim_id] += 1
-                sleep_until_quota_reset(exc.reset_seconds, marker_path=paused_marker)
-                continue
 
             except (Exception, ClaimTimeout) as exc:
                 elapsed = time.monotonic() - cycle_start
