@@ -496,28 +496,93 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
         story.append(Paragraph(body, note))
         story.append(Spacer(1, 8))
 
+    story.append(PageBreak())
+    story.append(Paragraph("10. Roadmap — how I am addressing these findings",
+                           styles["Heading2"]))
+    story.append(Paragraph(
+        "Each item below targets a specific weakness measured above, ordered by "
+        "expected gain per unit of work. The evaluation exists to direct this work: "
+        "every entry names the number it is meant to move.", note))
+    story.append(Spacer(1, 10))
+
+    roadmap = [
+        ("Quantifier-aware classification",
+         f"Absolute quantifiers ({pa:.0f}% vs {pr:.0f}%)",
+         "Detect <i>always / never / only / exactly / entire / globally</i> during "
+         "claim preprocessing and mark the claim as universal. The LLM prompt then "
+         "receives an explicit instruction that supporting the general statement is "
+         "not sufficient — evidence must address the universal, and a single "
+         "documented counter-example refutes it. I will also surface the quantifier "
+         "as a flag on the main claim node so the user can see the claim hinges on it.",
+         "Highest — addresses 5 of 8 wrong answers"),
+
+        ("Two-tier decision threshold",
+         "Errors cluster at 0.52-0.64 confidence",
+         "Every backwards answer sits just above the 0.50 commit threshold. I am "
+         "introducing a middle band: below 0.50 abstain as now, 0.50-0.65 return a "
+         "<i>leaning</i> verdict presented as provisional rather than decided, and "
+         "above 0.65 commit outright. This converts most current errors into "
+         "appropriately hedged answers without discarding the information.",
+         "High — cheap, and removes confident-wrong output"),
+
+        ("Numeric and comparative reasoning step",
+         "Superlative/quantity claims underperform",
+         "Add a step that extracts figures and units from both claim and evidence and "
+         "compares them arithmetically, instead of asking an entailment model to infer "
+         "ordering from prose. \"Africa is the largest continent\" should be refutable "
+         "by a source stating Asia's area, even when no sentence says so directly.",
+         "High — a distinct, well-defined claim class"),
+
+        ("Recency weighting for count-type claims",
+         "Jupiter moon count refuted by stale sources",
+         "Some claims are true only as of now. Where evidence carries conflicting "
+         "figures, I will prefer the most recently published source rather than "
+         "treating all sources as simultaneous, and flag the claim as time-sensitive "
+         "in the graph so the verdict is read with a date attached.",
+         "Medium — narrow but produces confident errors"),
+
+        ("Coverage: retrieval recall on ordinary true statements",
+         f"{missed} abstentions vs {wrong} errors",
+         "Abstentions dominate the remaining gap, and those claims mostly had zero "
+         "direct-support nodes — the evidence never arrived rather than being misread. "
+         "I am adding claim-type-aware query construction so an encyclopaedic assertion "
+         "is searched differently from a news claim, and will re-run this same 200-claim "
+         "benchmark to measure whether coverage moves without accuracy falling.",
+         "Medium — the largest single bucket, but diffuse"),
+
+        ("Keep this benchmark as a regression gate",
+         "No way to detect quality regressions today",
+         "The 200 claims, their reference answers, and this scoring script now live in "
+         "the repo. Before merging any change to retrieval, prompting, or the confidence "
+         "formula I will re-run it and compare accuracy, coverage and the error list — "
+         "so a change that improves one domain at another's expense is visible rather "
+         "than silent.",
+         "Structural — protects every gain above"),
+    ]
+
+    rows = [["#", "Change", "Targets", "Expected impact"]]
+    for i, (title, target, _body, impact) in enumerate(roadmap, start=1):
+        rows.append([
+            str(i),
+            Paragraph(f"<b>{html.escape(title)}</b>", cell_sm),
+            Paragraph(html.escape(target), cell_sm),
+            Paragraph(html.escape(impact), cell_sm),
+        ])
+    story.append(mk_table(rows, [0.3*inch, 2.0*inch, 2.1*inch, 2.9*inch],
+                          header_bg="#E8F5E9", size=7))
+    story.append(Spacer(1, 12))
+
+    for i, (title, _target, body, _impact) in enumerate(roadmap, start=1):
+        story.append(Paragraph(f"<b>{i}. {title}</b>", styles["Heading4"]))
+        story.append(Paragraph(body, note))
+        story.append(Spacer(1, 7))
+
     story.append(Spacer(1, 6))
-    story.append(Paragraph("10. Where to improve next", styles["Heading2"]))
-    for i, (t, b) in enumerate([
-        ("Raise coverage before chasing accuracy",
-         "Accuracy when committed is already high; the gap is the abstention rate. "
-         "The cheapest lever is retrieval recall on ordinary true statements — the "
-         "abstained claims mostly had few or zero direct-support nodes, meaning the "
-         "evidence never arrived rather than being misread."),
-        ("Add a numeric comparison step",
-         "Claims with superlatives or quantities need a step that extracts figures and "
-         "compares them, rather than asking an entailment model to infer ordering from "
-         "prose. This single class accounts for a large share of remaining errors."),
-        ("Restore the retrievers that were disabled",
-         "GDELT returned nothing all run (its API allows one request per 5 seconds and "
-         "rejects the concurrent queries), Reddit had no credentials, and NewsAPI's "
-         "100/day cap expired after ~30 claims. Guardian ran base-query only. Fixing "
-         "GDELT's pacing and adding Reddit credentials would widen evidence on exactly "
-         "the claims that abstained."),
-    ], start=1):
-        story.append(Paragraph(f"<b>{i}. {t}</b>", styles["Heading4"]))
-        story.append(Paragraph(b, note))
-        story.append(Spacer(1, 6))
+    story.append(Paragraph(
+        f"<b>Target for the next run of this benchmark:</b> hold accuracy at or above "
+        f"{pct(correct, answered)} while lifting coverage from {pct(answered, n_dec)} "
+        f"past 85%, and reduce backwards answers from {wrong} to at most 3 — with the "
+        f"quantifier and threshold changes alone accounting for most of that.", note))
 
     SimpleDocTemplate(
         str(out), pagesize=LETTER,
