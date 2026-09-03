@@ -77,17 +77,22 @@ ALL_SOURCE_GROUPS = [
 
 # Each Groq model carries its OWN tokens-per-day budget, so when one is spent
 # the run rotates to the next rather than idling for hours. Ordered by
-# preference; all three were verified to emit strict JSON.
+# preference; all remaining entries verified to emit strict JSON.
+#
+# llama-3.3-70b-versatile and llama-3.1-8b-instant were both fully removed
+# from Groq's catalog sometime after the 200-claim run finished (confirmed
+# via GET /v1/models — neither is listed anymore, despite both having worked
+# during that run). Every request against them now 404s. Update this list if
+# Groq's catalog changes again — don't assume a model that worked last week
+# still exists; check `GET /v1/models` first.
 DEFAULT_MODEL_CHAIN = [
-    "llama-3.3-70b-versatile",   # 12k TPM, highest quality
-    "llama-3.1-8b-instant",      # 6k TPM, original model
-    "openai/gpt-oss-120b",       # 8k TPM
-    "openai/gpt-oss-20b",        # 8k TPM, budget separate from the 120b
+    "openai/gpt-oss-120b",   # 8k TPM, highest quality currently available
+    "openai/gpt-oss-20b",    # 8k TPM, budget separate from the 120b
 ]
 # Rejected after testing on a real classification prompt:
-#   qwen/qwen3.6-27b   — emits <think> reasoning that breaks JSON parsing
-#   allam-2-7b         — truncates; classified 7 of 14 sources
-#   groq/compound[-mini] — routers onto the models above, no separate budget
+#   qwen/qwen3.6-27b, qwen/qwen3.8-27b — emit <think> reasoning that breaks JSON parsing
+#   allam-2-7b            — truncates; classified 7 of 14 sources
+#   groq/compound[-mini]  — routers onto the models above, no separate budget
 
 
 class ModelRotator:

@@ -27,6 +27,10 @@ if _hf_token:
     hf_login(token=_hf_token, add_to_git_credential=False)
     logging.getLogger(__name__).info("HuggingFace: authenticated via HF_TOKEN")
 
+from backend.app.preprocessing.claim_qualifiers import (
+    detect_absolute_quantifiers,
+    numeric_conflict_hint,
+)
 from backend.app.schemas.source_schema import Source
 from backend.app.services.cache_service import CacheService
 from backend.app.utils.constants import (
@@ -917,17 +921,35 @@ def _build_user_message(
                 lines.append(f"    Key evidence: {snippets_str}")
         lines.append("")
 
-    lines += [f"CLAIM: {claim}", "", "SOURCES:"]
+    lines += [f"CLAIM: {claim}"]
+    # A source can confirm the general gist of a claim while the quantifier
+    # alone makes it false ("gold prices ALWAYS rise" vs "gold prices
+    # typically rise") — measured to cause the majority of wrong verdicts in
+    # the 200-claim evaluation. Surface it explicitly rather than relying on
+    # the classifier to notice one word in a long sentence.
+    quantifiers = detect_absolute_quantifiers(claim)
+    if quantifiers:
+        lines.append(
+            f"NOTE: This claim contains an absolute qualifier "
+            f"({', '.join(quantifiers)}). See the ABSOLUTE QUALIFIER rule below."
+        )
+    lines += ["", "SOURCES:"]
     for i, source in enumerate(sources, start=1):
         raw_snippet = (source.snippet or "").strip() or "[no snippet]"
         snippet = raw_snippet[:_SNIPPET_MAX_CHARS] + ("…" if len(raw_snippet) > _SNIPPET_MAX_CHARS else "")
         nli_hint = source.stance_hint or "none"
-        lines.append(
+        line = (
             f"[{i}] title: {source.title}\n"
             f"    type: {source.source_type}\n"
             f"    nli_hint: {nli_hint}\n"
-            f"    snippet: {snippet}"
         )
+        # Bounded heuristic (see claim_qualifiers.py) — only emitted when the
+        # signal is unambiguous, so most sources carry no numeric_hint line.
+        num_hint = numeric_conflict_hint(claim, raw_snippet)
+        if num_hint:
+            line += f"    numeric_hint: {num_hint}\n"
+        line += f"    snippet: {snippet}"
+        lines.append(line)
     return "\n".join(lines)
 
 

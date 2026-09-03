@@ -17,6 +17,7 @@ from typing import Optional
 
 from backend.app.graph.edge_factory import build_edges, build_extended_edges, build_inter_node_edges
 from backend.app.graph.node_factory import build_evidence_nodes, build_extended_nodes, build_main_node
+from backend.app.preprocessing.claim_qualifiers import detect_absolute_quantifiers
 from backend.app.schemas.response_schema import GraphMetadata, GraphResponse
 from backend.app.services.confidence_service import ConfidenceService
 from backend.app.services.verify_claim_service import VerifyClaimResult
@@ -144,6 +145,8 @@ class GraphBuilderService:
                 retrieval_source_counts.get(src.source_type, 0) + 1
             )
 
+        matched_quantifiers = detect_absolute_quantifiers(result.claim_text)
+
         metadata = GraphMetadata(
             claim_text=result.claim_text,
             overall_verdict=conf.overall_verdict,
@@ -159,6 +162,12 @@ class GraphBuilderService:
             top_refute_score=round(top_refute, 3) if top_refute is not None else None,
             retrieval_notes=retrieval_note,
             retrieval_source_counts=retrieval_source_counts,
+            leaning_verdict=conf.leaning_verdict,
+            leaning_confidence=conf.leaning_confidence,
+            source_diversity_count=conf.source_diversity_count,
+            source_diversity_types=conf.source_diversity_types,
+            has_absolute_quantifier=bool(matched_quantifiers),
+            matched_quantifiers=matched_quantifiers,
         )
 
         graph = GraphResponse(metadata=metadata, nodes=all_nodes, edges=edges)

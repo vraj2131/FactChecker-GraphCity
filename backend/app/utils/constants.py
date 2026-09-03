@@ -262,8 +262,11 @@ LLM_MAX_NEW_TOKENS = 4096
 # Cache namespace for LLM outputs
 LLM_CACHE_NAMESPACE = "llm_outputs"
 
-# Prompt version — bump this to bust the LLM cache when the prompt changes
-LLM_PROMPT_VERSION = "v4"
+# Prompt version — bump this to bust the LLM cache when the prompt changes.
+# v5 adds the ABSOLUTE QUALIFIER rule and numeric_hint field — see
+# backend/app/preprocessing/claim_qualifiers.py and the 200-claim evaluation
+# (backend/scripts/batch_harness/analysis.pdf) that motivated both.
+LLM_PROMPT_VERSION = "v5"
 
 # Max sources shown to the LLM. 20 did NOT fit the Groq free-tier 6000 TPM
 # budget as the comment here once claimed: 20 sources is ~3470 prompt tokens,
@@ -279,8 +282,14 @@ LLM_MAX_INPUT_SOURCES = 14
 # -------------------------------------------------------------------
 
 # Groq model IDs — see https://console.groq.com/docs/models
-GROQ_MODEL_NAME = "llama-3.1-8b-instant"       # fast, free, Llama 3.1 8B quality
-GROQ_PROD_MODEL_NAME = "llama-3.3-70b-versatile"  # best quality on Groq free tier
+# llama-3.1-8b-instant and llama-3.3-70b-versatile were both removed from
+# Groq's catalog (confirmed via GET /v1/models — neither is listed anymore,
+# whereas both worked as of the last batch run). Every /verify-claim request
+# was failing with HTTP 404 model_not_found until this was caught. Verified
+# against the classify_sources_v5 prompt (strict JSON, all 14 sources
+# classified, correct verdict) before switching.
+GROQ_MODEL_NAME = "openai/gpt-oss-120b"
+GROQ_PROD_MODEL_NAME = "openai/gpt-oss-120b"
 
 # Max tokens for the JSON response.
 #
@@ -375,8 +384,18 @@ CALIBRATION_BREAKPOINTS: list = [
 ]
 
 # --- Verdict Thresholds ---
-CONFIDENCE_VERIFIED_THRESHOLD = 0.50     # above this → "verified"
-CONFIDENCE_REJECTED_THRESHOLD = 0.50     # above this → "rejected"
+# Raised from 0.50 after the 200-claim evaluation showed every wrong verdict
+# (8/8) carried calibrated confidence between 0.52 and 0.64 — i.e. barely
+# past the old bar. Below this, a supported/refuted LLM verdict now reports
+# as "not_enough_info" with a `leaning_verdict` hint instead of committing.
+# This trades some coverage for removing confidently-wrong answers, which is
+# the right trade for a fact-checking tool — see analysis.pdf section 4a/10.
+CONFIDENCE_VERIFIED_THRESHOLD = 0.65     # at/above this → "verified"
+CONFIDENCE_REJECTED_THRESHOLD = 0.65     # at/above this → "rejected"
+# Below VERIFIED/REJECTED but at/above this, the verdict is still
+# "not_enough_info" but ConfidenceOutput.leaning_verdict is set so the UI can
+# show a soft, clearly-provisional hint rather than nothing.
+CONFIDENCE_LEANING_THRESHOLD = 0.50
 CONFIDENCE_NEI_CEILING = 0.45            # NEI/mixed scores capped here
 
 # --- Corroboration ---

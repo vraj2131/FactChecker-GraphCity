@@ -167,6 +167,16 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   font-size: 11px;
   letter-spacing: 0;
 }
+.verdict-pill-leaning {
+  font-weight: 400;
+  font-style: italic;
+  opacity: 0.6;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  padding-left: 8px;
+  margin-left: 2px;
+  border-left: 1px solid currentColor;
+}
 /* ── Context Chain Banner (Feature 5/15) ─────────────────────────────────
    Anchored to the bottom-center, like legend-anchor/itabs-anchor, so it
    doesn't compete with the verdict pill for top-of-screen space. */
@@ -1466,6 +1476,56 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   line-height: 1;
   font-family: var(--font-mono);
 }
+
+/* Leaning-verdict hint — soft, deliberately not a colored badge so it can't
+   be mistaken for a committed verdict */
+.leaning-hint {
+  margin-top: 8px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.leaning-hint b { color: var(--text-primary); }
+
+/* Absolute-quantifier warning */
+.quantifier-badge {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px 11px;
+  margin-bottom: 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.07);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  font-size: 11px;
+  color: #fbbf24;
+  line-height: 1.5;
+}
+.quantifier-badge > svg { flex-shrink: 0; margin-top: 1px; }
+
+/* Source diversity badge */
+.diversity-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(34, 197, 94, 0.06);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  font-size: 11px;
+  font-weight: 600;
+  color: #86efac;
+}
+.diversity-badge--low {
+  background: rgba(245, 158, 11, 0.06);
+  border-color: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+.diversity-badge > svg { flex-shrink: 0; }
 
 /* Explore hint */
 .explore-hint {

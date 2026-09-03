@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from backend.app.preprocessing.claim_qualifiers import is_count_sensitive_claim
 from backend.app.preprocessing.deduplicate import deduplicate_sources
 from backend.app.preprocessing.entity_extractor import extract_claim_entities, anchor_present
 from backend.app.preprocessing.normalize_text import normalize_claim_text
@@ -44,6 +45,18 @@ _DATE_RECENT_DAYS = 90
 _DATE_OLD_DAYS = 730   # 2 years
 _DATE_RECENT_BONUS = 0.05
 _DATE_OLD_PENALTY = 0.05
+
+# Coverage: a short entity-only query variant for wikipedia/livewiki.
+# Verbose claim sentences ("The James Webb Space Telescope orbits the Earth
+# directly.") sometimes under-match FAISS embedding similarity or MediaWiki
+# opensearch compared to a bare entity query ("James Webb Space Telescope").
+# The 200-claim evaluation found abstention (not error) was the dominant gap
+# — most abstained claims had zero direct-support nodes because evidence
+# never arrived, not because it was misread — so this targets recall
+# directly rather than the classifier.
+_CORE_ENTITY_RETRIEVER_SOURCES = {"wikipedia", "livewiki"}
+_CORE_ENTITY_MAX_RESULTS = 5
+_CORE_ENTITY_MIN_WORDS = 6   # skip short claims — the base query already IS the entity query
 
 
 def _adversarial_queries(claim: str) -> List[str]:
@@ -96,6 +109,21 @@ def _decompose_query(claim: str) -> List[str]:
     return sub_queries[:2]
 
 
+def _core_entity_query(claim: str) -> Optional[str]:
+    """
+    A short, entity-only query variant — see _CORE_ENTITY_RETRIEVER_SOURCES.
+    Only fires when there's at least one strong anchor entity and the claim
+    is long enough that a bare-entity query differs meaningfully from the
+    base query already being issued.
+    """
+    if len(claim.split()) <= _CORE_ENTITY_MIN_WORDS:
+        return None
+    anchors, _ = extract_claim_entities(claim)
+    if not anchors:
+        return None
+    return " ".join(sorted(anchors)[:4])
+
+
 def _parse_date(date_str: str) -> datetime | None:
     """Parse a published_at string into a timezone-aware datetime, or None on failure."""
     if not date_str:
@@ -117,14 +145,22 @@ def _parse_date(date_str: str) -> datetime | None:
     return None
 
 
-def _apply_date_weighting(sources: List[Source]) -> List[Source]:
+def _apply_date_weighting(sources: List[Source], amplify: bool = False) -> List[Source]:
     """
     Adjust trust_score based on publication recency before ranking:
-      - Published within 90 days  → +0.05
-      - Published 2+ years ago    → -0.05
+      - Published within 90 days  → +0.05 (×2 when amplify=True)
+      - Published 2+ years ago    → -0.05 (×2 when amplify=True)
     Sources without a parseable date are unchanged.
+
+    `amplify` is set for count-sensitive claims (see
+    claim_qualifiers.is_count_sensitive_claim) — e.g. "Jupiter has more than
+    90 known moons" can be true today and false against a 2020 source in the
+    same breath, so recency should weigh more heavily than for claims whose
+    truth doesn't move over time.
     """
     now = datetime.now(timezone.utc)
+    recent_bonus = _DATE_RECENT_BONUS * (2 if amplify else 1)
+    old_penalty = _DATE_OLD_PENALTY * (2 if amplify else 1)
     result: List[Source] = []
     boosted = penalised = 0
     for source in sources:
@@ -134,10 +170,10 @@ def _apply_date_weighting(sources: List[Source]) -> List[Source]:
             if pub is not None:
                 age_days = (now - pub).days
                 if age_days <= _DATE_RECENT_DAYS:
-                    delta = _DATE_RECENT_BONUS
+                    delta = recent_bonus
                     boosted += 1
                 elif age_days >= _DATE_OLD_DAYS:
-                    delta = -_DATE_OLD_PENALTY
+                    delta = -old_penalty
                     penalised += 1
 
         if delta != 0.0:
@@ -147,7 +183,8 @@ def _apply_date_weighting(sources: List[Source]) -> List[Source]:
             result.append(source)
 
     logger.info(
-        "Date weighting: %d boosted (≤90d), %d penalised (≥2yr), %d unchanged",
+        "Date weighting%s: %d boosted (≤90d), %d penalised (≥2yr), %d unchanged",
+        " (amplified, count-sensitive claim)" if amplify else "",
         boosted, penalised, len(sources) - boosted - penalised,
     )
     return result
@@ -321,6 +358,21 @@ class RetrievalService:
                 for source_name in decomp_sources
             )
 
+            core_query = _core_entity_query(normalized_query)
+            if core_query:
+                core_sources = [
+                    s for s in available_sources if s in _CORE_ENTITY_RETRIEVER_SOURCES
+                ]
+                tasks.extend(
+                    (
+                        f"core::{source_name}::{core_query}",
+                        lambda sn=source_name, cq=core_query: self._registry.get(sn).retrieve(
+                            query=cq, max_results=_CORE_ENTITY_MAX_RESULTS,
+                        ),
+                    )
+                    for source_name in core_sources
+                )
+
         completed = run_concurrent(tasks, max_workers=16, timeout=10.0)
 
         completed_base_names = set()
@@ -401,7 +453,9 @@ class RetrievalService:
                     )
 
         # --- Date-weighted trust adjustment before ranking (Feature 4b) ---
-        date_weighted = _apply_date_weighting(deduped)
+        date_weighted = _apply_date_weighting(
+            deduped, amplify=is_count_sensitive_claim(normalized_query)
+        )
 
         # --- Rank (with entity-overlap penalty) ---
         ranked = self._ranking.rank(date_weighted, claim=normalized_query)

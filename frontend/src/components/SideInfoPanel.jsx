@@ -1,4 +1,4 @@
-import { X, ExternalLink, Shield, Zap, BarChart3, Globe, MousePointer, Network, Search } from 'lucide-react';
+import { X, ExternalLink, Shield, Zap, BarChart3, Globe, MousePointer, Network, Search, AlertTriangle, Layers3 } from 'lucide-react';
 import GaugePanel from './GaugePanel';
 import {
   NODE_TYPE_LABELS,
@@ -203,10 +203,36 @@ function MainClaimPanel({ node, graphJson, onClose }) {
             <span className="verdict-conf-inline">{Math.round(meta.overall_confidence * 100)}% confidence</span>
           )}
         </div>
+
+        {/* Leaning hint — shown only when the system fell short of the commit
+            threshold (0.65) but still cleared a provisional 0.50 floor.
+            Deliberately styled as a soft hint, not a badge, so it can't be
+            mistaken for a real verdict. */}
+        {meta?.leaning_verdict && (
+          <div className="leaning-hint" title="Below the confidence bar required to commit to a verdict">
+            <span>
+              Leaning <b>{meta.leaning_verdict === 'verified' ? 'TRUE' : 'FALSE'}</b>
+              {' '}({Math.round(meta.leaning_confidence * 100)}%) — not confident enough to commit
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="side-panel-body">
         <p className="side-panel-claim-text">{node.text}</p>
+
+        {/* Absolute-qualifier warning — claims with always/never/only/exactly/
+            entire/globally etc. measured 79% accuracy vs 98% for everything
+            else in evaluation, so flag it as a reason to double-check. */}
+        {meta?.has_absolute_quantifier && (
+          <div className="quantifier-badge" title="Claims with an absolute qualifier are historically less reliable to verify">
+            <AlertTriangle size={11} />
+            <span>
+              Absolute claim ({meta.matched_quantifiers.join(', ')}) — evidence must confirm the
+              exact scope, not just the general trend
+            </span>
+          </div>
+        )}
 
         {/* Confidence bar */}
         <div className="side-panel-section">
@@ -258,6 +284,25 @@ function MainClaimPanel({ node, graphJson, onClose }) {
                   Context
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Source diversity — how many INDEPENDENT kinds of source agree,
+            not just how many sources. A verdict backed by one source type
+            (e.g. only social posts) is a weaker signal than the same node
+            count spread across fact-check + news + encyclopaedic sources,
+            even though raw evidence counts above don't show that distinction. */}
+        {meta && (
+          <div className="side-panel-section">
+            <div
+              className={`diversity-badge ${meta.source_diversity_count <= 1 ? 'diversity-badge--low' : ''}`}
+              title={meta.source_diversity_types?.join(', ') || 'No sources'}
+            >
+              <Layers3 size={12} />
+              {meta.source_diversity_count <= 1
+                ? <span>Single-source claim{meta.source_diversity_count === 1 ? ` (${meta.source_diversity_types[0]})` : ''}</span>
+                : <span>Corroborated by {meta.source_diversity_count} independent source types</span>}
             </div>
           </div>
         )}

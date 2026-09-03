@@ -98,6 +98,54 @@ class GraphMetadata(BaseModel):
         description="Raw retrieval counts per source_type before LLM filtering."
     )
 
+    leaning_verdict: Optional[str] = Field(
+        default=None,
+        description=(
+            "Set only when overall_verdict is not_enough_info but the LLM's verdict was "
+            "supported/refuted with confidence in the 0.50-0.65 provisional band. "
+            "'verified' or 'rejected' — a soft hint, not a commitment."
+        ),
+    )
+
+    leaning_confidence: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0,
+        description="Calibrated confidence backing leaning_verdict, when set.",
+    )
+
+    source_diversity_count: int = Field(
+        default=0, ge=0,
+        description="Number of distinct retriever source_types among the sources sent to the LLM.",
+    )
+
+    source_diversity_types: List[str] = Field(
+        default_factory=list,
+        description="Which source_types contributed — e.g. ['factcheck', 'guardian', 'wikipedia'].",
+    )
+
+    has_absolute_quantifier: bool = Field(
+        default=False,
+        description=(
+            "True when the claim contains an absolute qualifier (always/never/only/exactly/"
+            "entire/globally/every/etc) that the confidence formula cannot verify — evaluation "
+            "showed these claims are meaningfully less reliable (79% vs 98% accuracy)."
+        ),
+    )
+
+    matched_quantifiers: List[str] = Field(
+        default_factory=list,
+        description="Which absolute-qualifier words/phrases were detected in the claim text.",
+    )
+
+    @field_validator("leaning_verdict")
+    @classmethod
+    def validate_leaning_verdict(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        lowered = value.strip().lower()
+        if lowered not in ("verified", "rejected"):
+            raise ValueError("leaning_verdict must be 'verified', 'rejected', or None.")
+        return lowered
+
     @field_validator("claim_text", "overall_verdict", "retrieval_notes", mode="before")
     @classmethod
     def strip_string_fields(cls, value):

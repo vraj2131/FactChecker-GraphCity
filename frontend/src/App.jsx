@@ -171,6 +171,11 @@ export default function App() {
               <span className="verdict-dot" style={{ background: verdict.color }} />
               <span className="verdict-pill-label">{verdict.label}</span>
               <span className="verdict-pill-conf">{Math.round(meta.overall_confidence * 100)}% confidence</span>
+              {meta.leaning_verdict && (
+                <span className="verdict-pill-leaning">
+                  leaning {meta.leaning_verdict === 'verified' ? 'true' : 'false'} ({Math.round(meta.leaning_confidence * 100)}%)
+                </span>
+              )}
             </div>
           )}
         </div>

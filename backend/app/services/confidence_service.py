@@ -19,6 +19,7 @@ from backend.app.models.llm_model import LLMResult
 from backend.app.models.nli_model import NLIResult
 from backend.app.schemas.source_schema import Source
 from backend.app.utils.constants import (
+    CONFIDENCE_LEANING_THRESHOLD,
     CONFIDENCE_NEI_CEILING,
     CONFIDENCE_REJECTED_THRESHOLD,
     CONFIDENCE_VERIFIED_THRESHOLD,
@@ -50,6 +51,16 @@ class ConfidenceOutput:
     corroboration: float  # corroboration sub-score
     coverage: float  # coverage sub-score
     raw_confidence: float  # pre-calibration weighted score
+    # Set only when overall_verdict is "not_enough_info" but the LLM verdict
+    # was supported/refuted with calibrated confidence at/above
+    # CONFIDENCE_LEANING_THRESHOLD — a provisional hint, not a commitment.
+    leaning_verdict: Optional[str] = None       # "verified" / "rejected" / None
+    leaning_confidence: Optional[float] = None
+    # Distinct retriever source_types among the sources sent to the LLM —
+    # how corroborated the verdict is by independent kinds of evidence,
+    # not just by volume. Same set used for the `coverage` sub-score above.
+    source_diversity_count: int = 0
+    source_diversity_types: List[str] = field(default_factory=list)
     debug: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -203,13 +214,27 @@ class ConfidenceService:
         # --- Calibrate ---
         calibrated = calibrate(raw)
 
-        # --- Map to final verdict ---
+        # --- Map to final verdict (two-tier: commit vs lean) ---
         if verdict == "supported" and calibrated >= CONFIDENCE_VERIFIED_THRESHOLD:
             final_verdict = "verified"
         elif verdict == "refuted" and calibrated >= CONFIDENCE_REJECTED_THRESHOLD:
             final_verdict = "rejected"
         else:
             final_verdict = "not_enough_info"
+
+        # Below the commit bar but not negligible: surface a provisional
+        # lean instead of a bare "not enough info". Only applies to
+        # supported/refuted LLM verdicts — insufficient/mixed never lean,
+        # since there's no direction to lean toward.
+        leaning_verdict: Optional[str] = None
+        leaning_confidence: Optional[float] = None
+        if (
+            final_verdict == "not_enough_info"
+            and verdict in ("supported", "refuted")
+            and calibrated >= CONFIDENCE_LEANING_THRESHOLD
+        ):
+            leaning_verdict = "verified" if verdict == "supported" else "rejected"
+            leaning_confidence = calibrated
 
         return ConfidenceOutput(
             overall_confidence=round(calibrated, 4),
@@ -220,6 +245,12 @@ class ConfidenceService:
             corroboration=round(corroboration, 4),
             coverage=round(coverage, 4),
             raw_confidence=round(raw, 4),
+            leaning_verdict=leaning_verdict,
+            leaning_confidence=(
+                round(leaning_confidence, 4) if leaning_confidence is not None else None
+            ),
+            source_diversity_count=len(all_types),
+            source_diversity_types=sorted(all_types),
             debug={
                 "directional": round(directional, 4),
                 "llm_conf": round(llm_conf, 4),

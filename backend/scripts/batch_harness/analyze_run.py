@@ -28,6 +28,9 @@ from reportlab.platypus import (
     PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
+# Shared with the production classifier so this analysis and the pipeline's
+# own ABSOLUTE QUALIFIER rule always agree on what counts as an absolute claim.
+from backend.app.preprocessing.claim_qualifiers import ABSOLUTE_QUANTIFIERS
 from backend.scripts.batch_harness.ground_truth import GROUND_TRUTH, score
 from backend.scripts.batch_harness.harness_lib import EXIT_ERROR, EXIT_OK, Manifest
 
@@ -36,12 +39,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(me
 logger = logging.getLogger("analyze")
 
 VERDICT_HEX = {"verified": "#2E7D32", "rejected": "#C62828", "not_enough_info": "#757575"}
-
-# Words that make a claim absolute. A source can support the general gist while
-# the quantifier alone makes the sentence false — the single largest source of
-# outright wrong answers in this run.
-ABSOLUTE_QUANTIFIERS = ("always", "never", "all ", "only", "exactly", "entire",
-                        "globally", "every", "no ")
 
 # My reading of why each backwards answer went wrong, written per claim rather
 # than generated, since the diagnosis is a judgement about the evidence.
@@ -89,6 +86,32 @@ def load(run_dir: Path) -> List[Dict]:
         r["outcome"] = score(r["truth"], r.get("verdict", "not_enough_info")) \
             if r["truth"] != "UNKNOWN" else "unknown"
     return records
+
+
+def compute_headline(records: List[Dict]) -> Dict[str, float]:
+    """
+    The core scoring numbers, reusable outside build_pdf — this is what
+    makes the benchmark usable as a regression gate: re-run it after any
+    change to retrieval/prompting/confidence math and compare these two
+    numbers against the previous run before merging.
+    """
+    outcomes = Counter(r["outcome"] for r in records)
+    decisive = [r for r in records if r["truth"] in ("TRUE", "FALSE")]
+    n_dec = len(decisive)
+    correct = outcomes["correct"]
+    wrong = outcomes["wrong"]
+    missed = outcomes["missed"]
+    answered = correct + wrong
+    return {
+        "n_decidable": n_dec,
+        "correct": correct,
+        "wrong": wrong,
+        "missed": missed,
+        "answered": answered,
+        "accuracy_when_answered": (correct / answered) if answered else 0.0,
+        "coverage": (answered / n_dec) if n_dec else 0.0,
+        "overall_correct": (correct / n_dec) if n_dec else 0.0,
+    }
 
 
 def graph_stats(run_dir: Path, records: List[Dict]) -> None:
@@ -596,6 +619,15 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Analyse a completed batch run")
     ap.add_argument("--run-dir", required=True)
+    ap.add_argument(
+        "--fail-under-accuracy", type=float, default=None,
+        help="Exit non-zero if accuracy-when-answered drops below this fraction (e.g. 0.90). "
+             "Use this as a pre-merge regression gate — see analysis.pdf section 10, item 6.",
+    )
+    ap.add_argument(
+        "--fail-under-coverage", type=float, default=None,
+        help="Exit non-zero if coverage drops below this fraction (e.g. 0.70).",
+    )
     args = ap.parse_args()
     run_dir = Path(args.run_dir)
 
@@ -610,6 +642,14 @@ def main() -> int:
     conflicts = [r for r in records if r.get("conflict")]
     logger.info("Conflicting-evidence claims: %d", len(conflicts))
 
+    headline = compute_headline(records)
+    logger.info(
+        "Headline: accuracy_when_answered=%.1f%% coverage=%.1f%% (%d/%d answered, %d correct, %d wrong, %d missed)",
+        headline["accuracy_when_answered"] * 100, headline["coverage"] * 100,
+        headline["answered"], headline["n_decidable"],
+        headline["correct"], headline["wrong"], headline["missed"],
+    )
+
     out = build_pdf(run_dir, records)
     logger.info("Analysis PDF: %s (%.1f MB)", out, out.stat().st_size / 1e6)
 
@@ -618,7 +658,25 @@ def main() -> int:
                                "outcome", "confidence", "num_sources", "n_support",
                                "n_pure_refute", "n_factcheck", "conflict")}
         for r in records], indent=2))
-    return EXIT_OK
+
+    # --- Regression gate ---
+    gate_failed = False
+    if args.fail_under_accuracy is not None and headline["accuracy_when_answered"] < args.fail_under_accuracy:
+        logger.error(
+            "GATE FAIL: accuracy_when_answered %.1f%% < required %.1f%%",
+            headline["accuracy_when_answered"] * 100, args.fail_under_accuracy * 100,
+        )
+        gate_failed = True
+    if args.fail_under_coverage is not None and headline["coverage"] < args.fail_under_coverage:
+        logger.error(
+            "GATE FAIL: coverage %.1f%% < required %.1f%%",
+            headline["coverage"] * 100, args.fail_under_coverage * 100,
+        )
+        gate_failed = True
+    if args.fail_under_accuracy is not None or args.fail_under_coverage is not None:
+        logger.info("GATE %s", "FAILED" if gate_failed else "PASSED")
+
+    return EXIT_ERROR if gate_failed else EXIT_OK
 
 
 if __name__ == "__main__":

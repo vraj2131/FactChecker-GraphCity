@@ -18,7 +18,10 @@ export PYTHONUNBUFFERED=1
 # interactive /verify-claim request should.
 export GROQ_RATE_LIMIT_MAX_ATTEMPTS=6
 # Each model has its own tokens-per-day budget; rotate rather than idle.
-export GROQ_MODEL_CHAIN="llama-3.3-70b-versatile,llama-3.1-8b-instant,openai/gpt-oss-120b,openai/gpt-oss-20b"
+# llama-3.3-70b-versatile and llama-3.1-8b-instant were removed from Groq's
+# catalog after the 200-claim run finished — check `GET /v1/models` before
+# reusing this list if it's been a while.
+export GROQ_MODEL_CHAIN="openai/gpt-oss-120b,openai/gpt-oss-20b"
 export TOKENIZERS_PARALLELISM=false
 
 # Reuse the newest existing run rather than keying off today's date — a run
