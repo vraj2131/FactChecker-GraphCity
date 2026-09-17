@@ -18,11 +18,22 @@ export PYTHONUNBUFFERED=1
 # interactive /verify-claim request should.
 export GROQ_RATE_LIMIT_MAX_ATTEMPTS=6
 # Each model has its own tokens-per-day budget; rotate rather than idle.
-# llama-3.3-70b-versatile and llama-3.1-8b-instant were removed from Groq's
-# catalog after the 200-claim run finished — check `GET /v1/models` before
-# reusing this list if it's been a while.
-export GROQ_MODEL_CHAIN="openai/gpt-oss-120b,openai/gpt-oss-20b"
+# Verify this list against `GET /v1/models` before reusing it — Groq has
+# fully removed models from its catalog twice already in this project
+# (llama-3.3-70b-versatile, llama-3.1-8b-instant), each time mid-run.
+# gpt-oss-safeguard-20b is last on purpose: it's moderation-tuned rather
+# than general-purpose, validated on 2 real classification prompts but not
+# on this run's myth-heavy content, so it only ever handles the tail end.
+export GROQ_MODEL_CHAIN="${GROQ_MODEL_CHAIN:-openai/gpt-oss-120b,openai/gpt-oss-20b,openai/gpt-oss-safeguard-20b}"
 export TOKENIZERS_PARALLELISM=false
+
+# Which claim corpus + reference answers to run. Override for a fresh
+# evaluation without touching the first run's files.
+CLAIMS_MODULE="${CLAIMS_MODULE:-backend.scripts.batch_harness.claims}"
+GT_MODULE="${GT_MODULE:-backend.scripts.batch_harness.ground_truth}"
+# Optional: a previous run's directory to diff this one against in the
+# final analysis PDF. Leave unset to skip the comparison section.
+COMPARE_TO="${COMPARE_TO:-}"
 
 # Reuse the newest existing run rather than keying off today's date — a run
 # that crosses midnight would otherwise restart into an empty directory and
@@ -47,7 +58,8 @@ while (( restart < MAX_RESTARTS )); do
   echo ""
   echo "--- phase1 attempt $((restart+1)) at $(date -Iseconds) ---"
   python -m backend.scripts.batch_harness.run_phase1_verify \
-      --run-dir "$RUN_DIR" 2>&1 | tee -a "$RUN_DIR/logs/phase1_${ts}.log"
+      --run-dir "$RUN_DIR" --claims-module "$CLAIMS_MODULE" \
+      2>&1 | tee -a "$RUN_DIR/logs/phase1_${ts}.log"
   code=${PIPESTATUS[0]}
 
   if (( code == 0 )); then
@@ -87,10 +99,21 @@ echo "--- phase3 report at $(date -Iseconds) ---"
 python -m backend.scripts.batch_harness.build_report \
     --run-dir "$RUN_DIR" 2>&1 | tee -a "$RUN_DIR/logs/report.log"
 
+# ---------- Phase 4: scored analysis (+ comparison to a previous run) ----------
+echo ""
+echo "--- phase4 analysis at $(date -Iseconds) ---"
+ANALYZE_ARGS=(--run-dir "$RUN_DIR" --ground-truth-module "$GT_MODULE")
+if [[ -n "$COMPARE_TO" ]]; then
+  ANALYZE_ARGS+=(--compare-to "$COMPARE_TO")
+fi
+python -m backend.scripts.batch_harness.analyze_run \
+    "${ANALYZE_ARGS[@]}" 2>&1 | tee -a "$RUN_DIR/logs/analysis.log"
+
 touch "$RUN_DIR/HARNESS_DONE"
 echo ""
 echo "=============================================="
 echo " ALL DONE $(date -Iseconds)"
-echo " PDF  : $RUN_DIR/report.pdf"
-echo " HTML : $RUN_DIR/index.html"
+echo " PDF        : $RUN_DIR/report.pdf"
+echo " HTML       : $RUN_DIR/index.html"
+echo " ANALYSIS   : $RUN_DIR/analysis.pdf"
 echo "=============================================="

@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib
 import logging
 import os
 import socket
@@ -33,7 +34,6 @@ from backend.app.models.llm_model import GroqDailyQuotaExhausted, GroqLLMModel
 from backend.app.services.graph_builder_service import GraphBuilderService
 from backend.app.services.verify_claim_service import VerifyClaimService
 import backend.app.services.retrieval_service as retrieval_service
-from backend.scripts.batch_harness.claims import ordered_claims
 from backend.scripts.batch_harness.harness_lib import (
     EXIT_DEGRADED,
     EXIT_ERROR,
@@ -86,11 +86,24 @@ ALL_SOURCE_GROUPS = [
 # Groq's catalog changes again — don't assume a model that worked last week
 # still exists; check `GET /v1/models` first.
 DEFAULT_MODEL_CHAIN = [
-    "openai/gpt-oss-120b",   # 8k TPM, highest quality currently available
-    "openai/gpt-oss-20b",    # 8k TPM, budget separate from the 120b
+    "openai/gpt-oss-120b",         # 8k TPM, highest quality currently available
+    "openai/gpt-oss-20b",          # 8k TPM, budget separate from the 120b
+    "openai/gpt-oss-safeguard-20b",  # 8k TPM, separate budget again — see caveat below
 ]
+# gpt-oss-safeguard-20b: validated on 2 real classification prompts (a
+# fact-check-heavy claim and a numeric-threshold claim) — both produced
+# strict JSON, classified all 14 sources, and reached the correct verdict.
+# It's a moderation-tuned model rather than a general one, and this run's
+# corpus includes ~40 common-myth claims (vaccines, conspiracies, etc.) that
+# weren't part of that validation — kept LAST in the chain deliberately, so
+# it only ever handles the tail end once both gpt-oss-120b/20b are spent,
+# minimizing exposure if it behaves differently on that content.
+#
 # Rejected after testing on a real classification prompt:
-#   qwen/qwen3.6-27b, qwen/qwen3.8-27b — emit <think> reasoning that breaks JSON parsing
+#   qwen/qwen3.6-27b, qwen/qwen3.8-27b — emit <think> reasoning that breaks
+#     JSON parsing; qwen3.8-27b also hard-caps output at 1000 tokens/min
+#     (below our 1600 max_tokens), so it would need a lower, inconsistent
+#     per-model budget to even run — risks degrading quality, not worth it
 #   allam-2-7b            — truncates; classified 7 of 14 sources
 #   groq/compound[-mini]  — routers onto the models above, no separate budget
 
@@ -179,10 +192,18 @@ def main() -> int:
         default=os.getenv("GROQ_MODEL_CHAIN", ",".join(DEFAULT_MODEL_CHAIN)),
         help="Comma-separated Groq model fallback chain (each has its own daily budget)",
     )
+    parser.add_argument(
+        "--claims-module",
+        default="backend.scripts.batch_harness.claims",
+        help="Python module exposing ordered_claims() -> [(domain, claim), ...]",
+    )
     args = parser.parse_args()
 
     model_chain = [m.strip() for m in args.models.split(",") if m.strip()]
     rotator = ModelRotator(model_chain)
+
+    claims_mod = importlib.import_module(args.claims_module)
+    ordered_claims = claims_mod.ordered_claims
 
     run_dir = Path(args.run_dir)
     graphs_dir = run_dir / "graphs"
@@ -225,14 +246,42 @@ def main() -> int:
     sha = git_sha()
     counts = {"ok": 0, "retryable": 0, "permanent": 0, "abandoned": 0}
 
+    # ETA tracking: a trailing window of recent per-claim durations (paced
+    # cycle time, including any quota waits folded in) rather than a
+    # cumulative average, so the estimate adapts when pacing or model
+    # rotation changes the effective rate mid-run.
+    run_start = time.monotonic()
+    recent_cycle_s: List[float] = []
+    ETA_WINDOW = 15
+
+    def _fmt_eta(seconds: float) -> str:
+        if seconds < 0 or seconds != seconds:  # nan guard
+            return "?"
+        h, rem = divmod(int(seconds), 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}h{m:02d}m" if h else f"{m}m{s:02d}s"
+
     try:
         for n, (index, domain, claim) in enumerate(todo, start=1):
             claim_id = make_claim_id(index, claim)
             attempt = attempts[claim_id] + 1
             cycle_start = time.monotonic()
+            # Separate from cycle_start: NOT reset on model rotation, so it
+            # captures true wall-clock cost including any quota-pause wait —
+            # what the ETA actually needs to reflect.
+            claim_wall_start = cycle_start
             started = utc_now_iso()
 
-            logger.info("[%d/%d] %s (attempt %d) %s", n, len(todo), claim_id, attempt, claim[:70])
+            if recent_cycle_s:
+                avg = sum(recent_cycle_s) / len(recent_cycle_s)
+                remaining = len(todo) - (n - 1)
+                eta_str = f" | ETA {_fmt_eta(avg * remaining)} (avg {avg:.0f}s/claim)"
+            else:
+                eta_str = ""
+            logger.info(
+                "[%d/%d] %s (attempt %d)%s %s",
+                n, len(todo), claim_id, attempt, eta_str, claim[:70],
+            )
 
             record = {
                 "schema_version": 1,
@@ -348,6 +397,17 @@ def main() -> int:
             slept = sleep_to_floor(cycle_start, args.pacing, record.get("elapsed_s", 0.0))
             if slept:
                 logger.debug("    paced %.0fs", slept)
+
+            # Feed the ETA window with the FULL wall-clock cost of this claim
+            # (work + any quota-pause wait + pacing sleep), so the estimate
+            # reflects real throughput rather than just API latency. Skip
+            # cache hits (same <5s threshold sleep_to_floor uses) — on a
+            # resumed run they'd flood the window with near-zero times and
+            # wreck the ETA the moment fresh claims resume.
+            if record.get("elapsed_s", 0.0) >= 5.0:
+                recent_cycle_s.append(time.monotonic() - claim_wall_start)
+                if len(recent_cycle_s) > ETA_WINDOW:
+                    recent_cycle_s.pop(0)
 
     except KeyboardInterrupt:
         logger.warning("Interrupted — progress is saved, re-run to resume.")

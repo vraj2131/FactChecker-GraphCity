@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib
 import json
 import logging
 import statistics
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
@@ -31,7 +32,7 @@ from reportlab.platypus import (
 # Shared with the production classifier so this analysis and the pipeline's
 # own ABSOLUTE QUALIFIER rule always agree on what counts as an absolute claim.
 from backend.app.preprocessing.claim_qualifiers import ABSOLUTE_QUANTIFIERS
-from backend.scripts.batch_harness.ground_truth import GROUND_TRUTH, score
+from backend.app.utils.constants import CONFIDENCE_VERIFIED_THRESHOLD
 from backend.scripts.batch_harness.harness_lib import EXIT_ERROR, EXIT_OK, Manifest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s",
@@ -77,13 +78,17 @@ OUTCOME_HEX = {
 }
 
 
-def load(run_dir: Path) -> List[Dict]:
+def load(
+    run_dir: Path,
+    ground_truth: Dict[str, str],
+    score_fn: Callable[[str, str], str],
+) -> List[Dict]:
     latest, _ = Manifest.load_state(run_dir / "manifest.jsonl")
     records = [r for r in latest.values() if r.get("status") == "ok"]
     records.sort(key=lambda r: r.get("index", 0))
     for r in records:
-        r["truth"] = GROUND_TRUTH.get(r["claim"], "UNKNOWN")
-        r["outcome"] = score(r["truth"], r.get("verdict", "not_enough_info")) \
+        r["truth"] = ground_truth.get(r["claim"], "UNKNOWN")
+        r["outcome"] = score_fn(r["truth"], r.get("verdict", "not_enough_info")) \
             if r["truth"] != "UNKNOWN" else "unknown"
     return records
 
@@ -114,6 +119,30 @@ def compute_headline(records: List[Dict]) -> Dict[str, float]:
     }
 
 
+def compute_quantifier_split(records: List[Dict]) -> Optional[Dict[str, float]]:
+    """
+    Accuracy on claims with an absolute qualifier vs. everything else — the
+    single most attributable before/after comparison across runs, since the
+    ABSOLUTE QUALIFIER prompt rule is a fixed, model-independent change.
+    Returns None if there aren't enough decidable claims to say anything.
+    """
+    decisive = [r for r in records if r.get("truth") in ("TRUE", "FALSE")]
+    if not decisive:
+        return None
+    absol = [r for r in decisive
+             if any(q in (r.get("claim") or "").lower() for q in ABSOLUTE_QUANTIFIERS)]
+    rest = [r for r in decisive if r not in absol]
+
+    def _acc(items):
+        c = sum(1 for r in items if r["outcome"] == "correct")
+        a = sum(1 for r in items if r["outcome"] in ("correct", "wrong"))
+        return c, a, (100.0 * c / a if a else 0.0)
+
+    c, a, acc = _acc(absol)
+    rc, ra, racc = _acc(rest)
+    return {"c": c, "a": a, "acc": acc, "rc": rc, "ra": ra, "racc": racc}
+
+
 def graph_stats(run_dir: Path, records: List[Dict]) -> None:
     """Attach per-claim evidence composition read from the graph JSONs."""
     for r in records:
@@ -135,7 +164,7 @@ def graph_stats(run_dir: Path, records: List[Dict]) -> None:
         r["conflict_strength"] = min(r["n_support"], r["n_pure_refute"])
 
 
-def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
+def build_pdf(run_dir: Path, records: List[Dict], compare: Optional[Dict] = None) -> Path:
     out = run_dir / "analysis.pdf"
     styles = getSampleStyleSheet()
     cell = ParagraphStyle("Cell", parent=styles["Normal"], fontSize=7.5, leading=9.5)
@@ -167,9 +196,10 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
         return t
 
     # ── Title & headline metrics ──────────────────────────────────────────
+    n_domains = len({r.get("domain") for r in records})
     story.append(Paragraph("FactGraph City — Evaluation Analysis", styles["Title"]))
     story.append(Paragraph(
-        f"{n} claims · 15 domains · scored against reference answers", styles["Normal"]))
+        f"{n} claims · {n_domains} domains · scored against reference answers", styles["Normal"]))
     story.append(Spacer(1, 14))
 
     story.append(Paragraph("1. Headline accuracy", styles["Heading2"]))
@@ -201,8 +231,70 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
         f"evidence\" is recoverable, asserting a falsehood confidently is not.", note))
     story.append(Spacer(1, 12))
 
+    # ── Comparison to the previous run ─────────────────────────────────────
+    if compare:
+        ph = compare["headline"]
+        story.append(Paragraph("2. Compared to the previous run", styles["Heading2"]))
+        story.append(Paragraph(
+            f"The first run ({compare['prev_n']} claims, {compare['prev_date']}) established "
+            "a baseline and surfaced the absolute-quantifier weakness this run was partly "
+            "designed to re-test. <b>Caveat first, because it matters</b>: the LLM classifier "
+            f"model changed between runs (see section 11) — some of any accuracy movement "
+            "below reflects that, not only the prompt/threshold/retrieval changes shipped in "
+            "between. Treat this as directional evidence, not a controlled experiment.", note))
+        story.append(Spacer(1, 8))
+
+        def _delta(new_v, old_v, pct_pts=True):
+            d = (new_v - old_v) * 100 if pct_pts else new_v - old_v
+            sign = "+" if d >= 0 else ""
+            return f"{sign}{d:.1f}"
+
+        rows = [
+            ["Metric", "Previous run", "This run", "Change"],
+            ["Claims evaluated", str(compare["prev_n"]), str(n), "—"],
+            ["Accuracy when answered", pct(ph["correct"], ph["answered"]), pct(correct, answered),
+             f"{_delta(correct/answered if answered else 0, ph['correct']/ph['answered'] if ph['answered'] else 0)} pts"],
+            ["Coverage", pct(ph["answered"], ph["n_decidable"]), pct(answered, n_dec),
+             f"{_delta(answered/n_dec if n_dec else 0, ph['answered']/ph['n_decidable'] if ph['n_decidable'] else 0)} pts"],
+            ["Wrong answers", f"{ph['wrong']} of {ph['n_decidable']}", f"{wrong} of {n_dec}", "—"],
+            ["Abstained", f"{ph['missed']} of {ph['n_decidable']}", f"{missed} of {n_dec}", "—"],
+        ]
+        story.append(mk_table(rows, [1.9*inch, 1.3*inch, 1.3*inch, 1.1*inch]))
+        story.append(Spacer(1, 10))
+
+        # Quantifier-specific before/after — the most direct evidence of
+        # whether the v5 prompt's ABSOLUTE QUALIFIER rule actually helped,
+        # since that fix applies regardless of which model is running.
+        if compare.get("quant_prev") and compare.get("quant_new"):
+            qp, qn = compare["quant_prev"], compare["quant_new"]
+            story.append(Paragraph(
+                "<b>Absolute-quantifier accuracy — the change this run was built to test:</b>", cell))
+            qrows = [
+                ["", "Previous run", "This run"],
+                ["Quantifier claims", f"{qp['acc']:.0f}% ({qp['c']}/{qp['a']})", f"{qn['acc']:.0f}% ({qn['c']}/{qn['a']})"],
+                ["All other claims", f"{qp['racc']:.0f}% ({qp['rc']}/{qp['ra']})", f"{qn['racc']:.0f}% ({qn['rc']}/{qn['ra']})"],
+                ["Gap (other − quantifier)", f"{qp['racc']-qp['acc']:.0f} pts", f"{qn['racc']-qn['acc']:.0f} pts"],
+            ]
+            story.append(mk_table(qrows, [2.0*inch, 2.0*inch, 2.0*inch], header_bg="#FFF3E0", size=8))
+            story.append(Spacer(1, 8))
+            gap_before = qp['racc'] - qp['acc']
+            gap_after = qn['racc'] - qn['acc']
+            verdict_txt = (
+                "narrowed — the ABSOLUTE QUALIFIER prompt rule appears to be helping"
+                if gap_after < gap_before else
+                "did not narrow on this corpus — worth a closer look at which quantifier "
+                "claims still fail before concluding the fix underperformed"
+            )
+            story.append(Paragraph(
+                f"The accuracy gap between quantifier and non-quantifier claims {verdict_txt}. "
+                f"Previous run: {gap_before:.0f}-point gap. This run: {gap_after:.0f}-point gap. "
+                "This is the single most attributable comparison in this section, since the "
+                "ABSOLUTE QUALIFIER rule is a prompt-level change that applies identically "
+                "regardless of which underlying model is running.", note))
+        story.append(PageBreak())
+
     # ── Truth vs verdict confusion matrix ─────────────────────────────────
-    story.append(Paragraph("2. Reference answer vs system verdict", styles["Heading2"]))
+    story.append(Paragraph("3. Reference answer vs system verdict", styles["Heading2"]))
     matrix: Dict = defaultdict(Counter)
     for r in records:
         matrix[r["truth"]][r.get("verdict")] += 1
@@ -224,7 +316,7 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
     story.append(PageBreak())
 
     # ── Domain breakdown ──────────────────────────────────────────────────
-    story.append(Paragraph("3. Accuracy by domain", styles["Heading2"]))
+    story.append(Paragraph("4. Accuracy by domain", styles["Heading2"]))
     by_domain: Dict = defaultdict(list)
     for r in records:
         by_domain[r["domain"]].append(r)
@@ -257,7 +349,7 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
     story.append(PageBreak())
 
     # ── Disagreements ─────────────────────────────────────────────────────
-    story.append(Paragraph("4. Where I disagree with the system", styles["Heading2"]))
+    story.append(Paragraph("5. Where I disagree with the system", styles["Heading2"]))
     wrongs = [r for r in records if r["outcome"] == "wrong"]
     story.append(Paragraph(
         f"<b>4a. Answered backwards ({len(wrongs)} claims).</b> These are the only "
@@ -324,7 +416,7 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
     wrong_abs = [r for r in wrongs
                  if any(q in r["claim"].lower() for q in ABSOLUTE_QUANTIFIERS)]
 
-    story.append(Paragraph("4c. The single biggest failure mode: absolute quantifiers",
+    story.append(Paragraph("5c. The single biggest failure mode: absolute quantifiers",
                            styles["Heading2"]))
     story.append(Paragraph(
         "The clearest pattern in the whole run. When a claim hinges on a word like "
@@ -351,7 +443,7 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
     story.append(PageBreak())
 
     # ── Contested claims ──────────────────────────────────────────────────
-    story.append(Paragraph("5. Genuinely contested claims", styles["Heading2"]))
+    story.append(Paragraph("6. Genuinely contested claims", styles["Heading2"]))
     story.append(Paragraph(
         "Five claims were written to be defensible either way — disputed, "
         "definition-dependent, or true only under a qualification the claim omits. "
@@ -377,7 +469,7 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
     story.append(Spacer(1, 14))
 
     # ── Conflicting evidence ──────────────────────────────────────────────
-    story.append(Paragraph("6. Claims with conflicting direct evidence", styles["Heading2"]))
+    story.append(Paragraph("7. Claims with conflicting direct evidence", styles["Heading2"]))
     conflicts = sorted([r for r in records if r.get("conflict")],
                        key=lambda r: -r["conflict_strength"])
     story.append(Paragraph(
@@ -415,7 +507,7 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
     story.append(PageBreak())
 
     # ── Confidence calibration ────────────────────────────────────────────
-    story.append(Paragraph("7. Confidence calibration", styles["Heading2"]))
+    story.append(Paragraph("8. Confidence calibration", styles["Heading2"]))
     story.append(Paragraph(
         "If confidence is meaningful, accuracy should rise with it. Each band shows "
         "how often committed verdicts in that range matched the reference answer.", note))
@@ -433,7 +525,7 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
     story.append(Spacer(1, 10))
 
     # ── Evidence & retrieval ──────────────────────────────────────────────
-    story.append(Paragraph("8. Evidence and retrieval", styles["Heading2"]))
+    story.append(Paragraph("9. Evidence and retrieval", styles["Heading2"]))
     src = Counter()
     for r in records:
         for k, v in (r.get("retrieval_source_counts") or {}).items():
@@ -462,7 +554,7 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
     story.append(PageBreak())
 
     # ── Findings ──────────────────────────────────────────────────────────
-    story.append(Paragraph("9. What the numbers say", styles["Heading2"]))
+    story.append(Paragraph("10. What the numbers say", styles["Heading2"]))
     numeric_kw = ("largest", "more than", "most", "exactly", "percent", "smallest", "longest")
     numeric = [r for r in records if r["truth"] in ("TRUE", "FALSE")
                and any(k in r["claim"].lower() for k in numeric_kw)]
@@ -484,24 +576,37 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
          f"Fact-checkers publish articles about falsehoods, so a myth attracts purpose-written "
          f"refutations while an ordinary truth attracts only encyclopaedic prose that the "
          f"classifier reads as merely topical."),
-        ("Absolute quantifiers are the largest identifiable weakness",
-         f"Claims turning on \"always/never/only/exactly/entire/globally\" scored "
-         f"{pa:.0f}% against {pr:.0f}% for everything else, and account for "
-         f"{len(wrong_abs)} of {len(wrongs)} backwards answers. Sources support the gist; "
-         f"the quantifier is what makes the sentence false, and nothing in the pipeline "
-         f"treats that single word as load-bearing."),
+        ("Absolute quantifiers remain the largest identifiable weakness"
+         if pr - pa >= 5 else "Absolute quantifiers are no longer a large gap on this corpus",
+         (
+             f"Claims turning on \"always/never/only/exactly/entire/globally\" scored "
+             f"{pa:.0f}% against {pr:.0f}% for everything else"
+             + (f", and account for {len(wrong_abs)} of {len(wrongs)} backwards answers"
+                if wrongs else "")
+             + f". Sources support the general gist; the quantifier is what makes the "
+             f"sentence false. See section 2 for how this compares to the previous run, "
+             f"if available."
+         )),
         ("Numeric and superlative claims are a related weak spot",
          f"{num_bad} of {len(numeric)} claims containing a comparison or quantity "
          f"(\"largest\", \"more than\", \"exactly\", \"percent\") were not resolved correctly. "
          f"Retrieval finds the right documents, but neither NLI nor the classifier performs "
          f"arithmetic, so \"Africa is the largest continent\" cannot be refuted by a source "
          f"stating Asia's area unless the text says so in words."),
-        ("Errors cluster just above the decision threshold",
-         "All eight backwards answers carry confidence between 0.52 and 0.64, against a "
-         "0.50 threshold. None is a confident falsehood. Raising the commit threshold to "
-         "~0.65 would convert most errors into abstentions — trading coverage for "
-         "precision, which is the right trade for a fact-checking tool if users act on "
-         "its verdicts."),
+        ("Where the remaining errors sit on the confidence scale",
+         (
+             f"The {len(wrongs)} backwards answers carry confidence between "
+             f"{min((r.get('confidence') or 0) for r in wrongs):.2f} and "
+             f"{max((r.get('confidence') or 0) for r in wrongs):.2f} "
+             f"(commit threshold: {CONFIDENCE_VERIFIED_THRESHOLD:.2f}). "
+             + ("None is a confident falsehood — every error sits within 0.15 of the "
+                "commit bar, which is what a two-tier threshold is designed to catch: "
+                "claims that clear it barely become a hedged 'leaning' hint instead of "
+                "an outright commitment."
+                if wrongs and max((r.get('confidence') or 0) for r in wrongs) - CONFIDENCE_VERIFIED_THRESHOLD < 0.15
+                else "At least one error is not a narrow miss — confidence calibration "
+                     "may need another look, not just the threshold position.")
+         ) if wrongs else "No claims were answered backwards this run."),
         ("Conflicting evidence is handled, not avoided",
          f"{len(conflicts)} claims produced graphs holding both supporting and refuting "
          f"direct evidence. The confidence formula discounts the winning side by half the "
@@ -520,92 +625,106 @@ def build_pdf(run_dir: Path, records: List[Dict]) -> Path:
         story.append(Spacer(1, 8))
 
     story.append(PageBreak())
-    story.append(Paragraph("10. Roadmap — how I am addressing these findings",
-                           styles["Heading2"]))
+    story.append(Paragraph("11. What shipped since the last run", styles["Heading2"]))
     story.append(Paragraph(
-        "Each item below targets a specific weakness measured above, ordered by "
-        "expected gain per unit of work. The evaluation exists to direct this work: "
-        "every entry names the number it is meant to move.", note))
+        "Six items plus a new indicator were built in direct response to the first "
+        "run's findings. This section states what each one does and what evidence "
+        "(from section 2's comparison, or structurally) speaks to whether it worked — "
+        "it does not repeat the roadmap framing from before, since these are no "
+        "longer proposals.", note))
     story.append(Spacer(1, 10))
 
-    roadmap = [
+    shipped = [
         ("Quantifier-aware classification",
-         f"Absolute quantifiers ({pa:.0f}% vs {pr:.0f}%)",
-         "Detect <i>always / never / only / exactly / entire / globally</i> during "
-         "claim preprocessing and mark the claim as universal. The LLM prompt then "
-         "receives an explicit instruction that supporting the general statement is "
-         "not sufficient — evidence must address the universal, and a single "
-         "documented counter-example refutes it. I will also surface the quantifier "
-         "as a flag on the main claim node so the user can see the claim hinges on it.",
-         "Highest — addresses 5 of 8 wrong answers"),
-
+         "The v5 prompt now carries an explicit ABSOLUTE QUALIFIER rule: a source "
+         "confirming the general trend of an always/never/only/exactly/entire/"
+         "globally claim is correlated_context, not direct_support — a documented "
+         "exception is enough to refute outright. "
+         + (f"See section 2: the quantifier-vs-other accuracy gap moved from "
+            f"{compare['quant_prev']['racc']-compare['quant_prev']['acc']:.0f} to "
+            f"{compare['quant_new']['racc']-compare['quant_new']['acc']:.0f} points."
+            if compare and compare.get("quant_prev") and compare.get("quant_new")
+            else "This run's own quantifier-vs-other split is in section 4/10 above.")),
         ("Two-tier decision threshold",
-         "Errors cluster at 0.52-0.64 confidence",
-         "Every backwards answer sits just above the 0.50 commit threshold. I am "
-         "introducing a middle band: below 0.50 abstain as now, 0.50-0.65 return a "
-         "<i>leaning</i> verdict presented as provisional rather than decided, and "
-         "above 0.65 commit outright. This converts most current errors into "
-         "appropriately hedged answers without discarding the information.",
-         "High — cheap, and removes confident-wrong output"),
-
-        ("Numeric and comparative reasoning step",
-         "Superlative/quantity claims underperform",
-         "Add a step that extracts figures and units from both claim and evidence and "
-         "compares them arithmetically, instead of asking an entailment model to infer "
-         "ordering from prose. \"Africa is the largest continent\" should be refutable "
-         "by a source stating Asia's area, even when no sentence says so directly.",
-         "High — a distinct, well-defined claim class"),
-
-        ("Recency weighting for count-type claims",
-         "Jupiter moon count refuted by stale sources",
-         "Some claims are true only as of now. Where evidence carries conflicting "
-         "figures, I will prefer the most recently published source rather than "
-         "treating all sources as simultaneous, and flag the claim as time-sensitive "
-         "in the graph so the verdict is read with a date attached.",
-         "Medium — narrow but produces confident errors"),
-
-        ("Coverage: retrieval recall on ordinary true statements",
-         f"{missed} abstentions vs {wrong} errors",
-         "Abstentions dominate the remaining gap, and those claims mostly had zero "
-         "direct-support nodes — the evidence never arrived rather than being misread. "
-         "I am adding claim-type-aware query construction so an encyclopaedic assertion "
-         "is searched differently from a news claim, and will re-run this same 200-claim "
-         "benchmark to measure whether coverage moves without accuracy falling.",
-         "Medium — the largest single bucket, but diffuse"),
-
-        ("Keep this benchmark as a regression gate",
-         "No way to detect quality regressions today",
-         "The 200 claims, their reference answers, and this scoring script now live in "
-         "the repo. Before merging any change to retrieval, prompting, or the confidence "
-         "formula I will re-run it and compare accuracy, coverage and the error list — "
-         "so a change that improves one domain at another's expense is visible rather "
-         "than silent.",
-         "Structural — protects every gain above"),
+         "The commit bar rose from 0.50 to 0.65; 0.50-0.65 now returns "
+         "not_enough_info with a leaning_verdict/leaning_confidence hint attached "
+         "instead of nothing. This trades some coverage for removing confident-wrong "
+         "answers — see section 10 for where this run's errors actually sit on the "
+         "confidence scale."),
+        ("Numeric threshold detection (bounded)",
+         "Claims asserting a threshold (\"more than 90\", \"at least 27\", \"exactly "
+         "37\") now get a numeric_hint on any source whose cited figure violates it. "
+         "Deliberately scoped: it does not resolve superlatives like \"largest\" or "
+         "\"most\", which need an external comparison dataset this pipeline still "
+         "doesn't have — see the roadmap below."),
+        ("Recency-weighted ranking for count-sensitive claims",
+         "Claims like a moon count that can go stale now get double the usual "
+         "date-recency trust adjustment, so a currently-true count isn't overruled "
+         "by an old source citing a smaller number."),
+        ("Retrieval-recall query variant",
+         "A bare entity-only query now runs alongside the verbose claim text for "
+         "wikipedia/livewiki, targeting claims whose full sentence under-matches "
+         "embedding or opensearch similarity. Section 2 shows whether coverage "
+         "actually moved."),
+        ("Regression gate",
+         "analyze_run.py now accepts --fail-under-accuracy / --fail-under-coverage "
+         "and exits non-zero on either regression — this run's own analyze step can "
+         "be wired into that gate for whatever comes next."),
+        ("Source-diversity indicator (new capability, not a fix)",
+         "Every verdict now reports how many independent kinds of source agree, not "
+         "just how many nodes — surfaced in the side panel and in "
+         "GraphMetadata.source_diversity_count/types. Guards against mistaking "
+         "volume (many similar sources) for corroboration (independent ones)."),
     ]
-
-    rows = [["#", "Change", "Targets", "Expected impact"]]
-    for i, (title, target, _body, impact) in enumerate(roadmap, start=1):
-        rows.append([
-            str(i),
-            Paragraph(f"<b>{html.escape(title)}</b>", cell_sm),
-            Paragraph(html.escape(target), cell_sm),
-            Paragraph(html.escape(impact), cell_sm),
-        ])
-    story.append(mk_table(rows, [0.3*inch, 2.0*inch, 2.1*inch, 2.9*inch],
-                          header_bg="#E8F5E9", size=7))
-    story.append(Spacer(1, 12))
-
-    for i, (title, _target, body, _impact) in enumerate(roadmap, start=1):
+    for i, (title, body) in enumerate(shipped, start=1):
         story.append(Paragraph(f"<b>{i}. {title}</b>", styles["Heading4"]))
         story.append(Paragraph(body, note))
         story.append(Spacer(1, 7))
 
-    story.append(Spacer(1, 6))
+    story.append(PageBreak())
+    story.append(Paragraph("12. Roadmap — what to build next", styles["Heading2"]))
     story.append(Paragraph(
-        f"<b>Target for the next run of this benchmark:</b> hold accuracy at or above "
-        f"{pct(correct, answered)} while lifting coverage from {pct(answered, n_dec)} "
-        f"past 85%, and reduce backwards answers from {wrong} to at most 3 — with the "
-        f"quantifier and threshold changes alone accounting for most of that.", note))
+        "Ordered by expected gain per unit of work, using this run's own numbers "
+        "rather than repeating the first run's list.", note))
+    story.append(Spacer(1, 10))
+
+    roadmap2 = [
+        ("Numeric/superlative reasoning against a real comparison dataset",
+         f"Superlative claims (\"largest\", \"most\") still can't be arithmetically "
+         f"resolved — {num_bad} of {len(numeric)} numeric/comparative claims in this "
+         f"run were not resolved correctly. The bounded threshold-hint shipped this "
+         f"round doesn't reach this class; it needs an actual reference dataset "
+         f"(e.g. Wikidata figures) to compare against."),
+        ("Coverage is still the largest lever",
+         f"{missed} of {n_dec} decidable claims abstained this run versus {wrong} "
+         f"wrong — the same shape as before. The entity-only query variant is one "
+         f"lever; claim-type-aware query construction (encyclopaedic vs. news vs. "
+         f"myth-shaped queries routed differently) is the next one, informed "
+         f"directly by which domains under-covered in section 4."),
+        ("A model-catalog resilience check",
+         "This run needed fresh validation of the Groq model lineup before "
+         "launching — two prior runs were each blocked mid-flight by a model "
+         "silently disappearing from the catalog. A small pre-flight script that "
+         "checks GET /v1/models against the configured chain (and fails loudly, "
+         "before burning quota) would catch this automatically instead of by hand "
+         "each time."),
+        ("Myth-specific retrieval tuning",
+         "This run added a dedicated Common Myths & Misconceptions domain "
+         "specifically to stress-test the quantifier/numeric fixes on the content "
+         "they were built for. Section 4's domain table shows how that domain "
+         "performed relative to the others — if it lags, myth-shaped claims may "
+         "need their own adversarial-query treatment the way fact-check sources "
+         "already get."),
+        ("Keep re-running this benchmark before merging",
+         "Now genuinely a process, not an aspiration: two independent 200-claim "
+         "corpora exist (claims.py, claims_v2.py) plus their reference answers and "
+         "a working --fail-under gate. The next change to retrieval, prompting, or "
+         "the confidence formula should run against both before merging."),
+    ]
+    for i, (title, body) in enumerate(roadmap2, start=1):
+        story.append(Paragraph(f"<b>{i}. {title}</b>", styles["Heading4"]))
+        story.append(Paragraph(body, note))
+        story.append(Spacer(1, 7))
 
     SimpleDocTemplate(
         str(out), pagesize=LETTER,
@@ -620,9 +739,19 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Analyse a completed batch run")
     ap.add_argument("--run-dir", required=True)
     ap.add_argument(
+        "--ground-truth-module",
+        default="backend.scripts.batch_harness.ground_truth",
+        help="Module exposing GROUND_TRUTH dict + score(label, verdict) fn",
+    )
+    ap.add_argument(
+        "--compare-to", default=None,
+        help="Path to a PREVIOUS run's directory (must contain analysis.json) — "
+             "adds a before/after comparison section to the report.",
+    )
+    ap.add_argument(
         "--fail-under-accuracy", type=float, default=None,
         help="Exit non-zero if accuracy-when-answered drops below this fraction (e.g. 0.90). "
-             "Use this as a pre-merge regression gate — see analysis.pdf section 10, item 6.",
+             "Use this as a pre-merge regression gate.",
     )
     ap.add_argument(
         "--fail-under-coverage", type=float, default=None,
@@ -631,7 +760,8 @@ def main() -> int:
     args = ap.parse_args()
     run_dir = Path(args.run_dir)
 
-    records = load(run_dir)
+    gt_mod = importlib.import_module(args.ground_truth_module)
+    records = load(run_dir, gt_mod.GROUND_TRUTH, gt_mod.score)
     if not records:
         logger.error("No completed claims found in %s", run_dir)
         return EXIT_ERROR
@@ -650,7 +780,33 @@ def main() -> int:
         headline["correct"], headline["wrong"], headline["missed"],
     )
 
-    out = build_pdf(run_dir, records)
+    compare = None
+    if args.compare_to:
+        prev_dir = Path(args.compare_to)
+        prev_json = prev_dir / "analysis.json"
+        if not prev_json.exists():
+            logger.warning("--compare-to given but %s has no analysis.json — skipping comparison", prev_dir)
+        else:
+            prev_records = json.loads(prev_json.read_text())
+            prev_headline = compute_headline(prev_records)
+            quant_prev = compute_quantifier_split(prev_records)
+            quant_new = compute_quantifier_split(records)
+            # Best-effort date from the oldest record's directory name / mtime.
+            prev_date = prev_dir.name.replace("batch_run_", "").replace("_", " ")
+            compare = {
+                "headline": prev_headline,
+                "prev_n": len(prev_records),
+                "prev_date": prev_date,
+                "quant_prev": quant_prev,
+                "quant_new": quant_new,
+            }
+            logger.info(
+                "Comparing to %s: prev accuracy=%.1f%% coverage=%.1f%% (n=%d)",
+                prev_dir, prev_headline["accuracy_when_answered"] * 100,
+                prev_headline["coverage"] * 100, len(prev_records),
+            )
+
+    out = build_pdf(run_dir, records, compare=compare)
     logger.info("Analysis PDF: %s (%.1f MB)", out, out.stat().st_size / 1e6)
 
     (run_dir / "analysis.json").write_text(json.dumps([
