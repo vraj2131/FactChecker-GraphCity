@@ -300,14 +300,21 @@ GROQ_PROD_MODEL_NAME = "openai/gpt-oss-120b"
 # "failed to parse JSON after retry".
 #
 # Budget on the free tier is 6000 TPM. With LLM_MAX_INPUT_SOURCES=14 the
-# prompt runs ~2850 tokens.
+# prompt runs ~2000-2900 tokens depending on snippet lengths.
 #
-# Because this is a reservation, over-sizing it burns daily budget that is
-# never used: measured responses for 14 sources run ~700-900 tokens (short
-# rationales, ~100 chars each), so 3000 reserved more than 3x what completes.
-# 1600 keeps comfortable headroom above the observed maximum while cutting
-# ~24% off the per-claim charge against the tokens-per-day cap.
-GROQ_MAX_TOKENS = 1600
+# 1600 was sized against llama-3.1-8b-instant (~700-900 completion tokens for
+# 14 sources) but silently produced a ~70% truncation rate once Groq removed
+# that model and the pipeline fell back to openai/gpt-oss-120b, which is
+# measurably more verbose per source: a live test with 14 realistic sources
+# needed 2128 completion tokens to finish cleanly (finish_reason="stop").
+# Truncation doesn't fail loudly — the JSON-repair path salvages what
+# completed and the rest silently default to "insufficient" (see
+# node_factory's fallback), so a real direct-support source can read as
+# unclassified evidence with no error anywhere. 2800 covers the measured
+# case with headroom; if you swap models again, re-measure rather than
+# reuse this number — see backend/scripts/batch_harness/run_phase1_verify.py
+# for the model-validation pattern.
+GROQ_MAX_TOKENS = 2800
 
 # Cache namespace for Groq outputs
 GROQ_CACHE_NAMESPACE = "groq_outputs"

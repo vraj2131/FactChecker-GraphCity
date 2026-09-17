@@ -411,6 +411,15 @@ def _llm_cache_key(
         source_fingerprint=source_fingerprint,
         context_fingerprint=context_fingerprint,
         prompt_version=LLM_PROMPT_VERSION,
+        # A cached response reflects the max_tokens reservation it was
+        # generated under. Without this, raising the budget to fix a
+        # truncation bug would keep silently serving the already-truncated
+        # response for any claim already cached under the same
+        # model+claim+sources+prompt_version — exactly the failure that
+        # motivated this fingerprint (a ~70% truncation rate went unnoticed
+        # for a full model swap because the fix wouldn't have invalidated
+        # anything without it).
+        max_tokens=GROQ_MAX_TOKENS,
     )
 
 
