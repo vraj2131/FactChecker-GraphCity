@@ -701,6 +701,20 @@ def build_pdf(run_dir: Path, records: List[Dict], compare: Optional[Dict] = None
          f"lever; claim-type-aware query construction (encyclopaedic vs. news vs. "
          f"myth-shaped queries routed differently) is the next one, informed "
          f"directly by which domains under-covered in section 4."),
+        ("Promote leaning verdicts to committed ones using source diversity, not just raw confidence",
+         f"{missed} claims abstained this run purely because their confidence sat in "
+         f"the 0.50-0.65 band — each of those already carries a leaning_verdict and "
+         f"leaning_confidence hint, so the pipeline knows what it would have said. "
+         f"Right now nothing acts on that hint. A safer promotion rule than lowering "
+         f"the global threshold: commit a leaning verdict when it's corroborated by "
+         f"source_diversity_count >= 3 independent retriever types AND at least one "
+         f"of them is factcheck or guardian (the two highest-trust anchors) — "
+         f"agreement across independent source types is a different, complementary "
+         f"signal from the NLI/LLM confidence score itself, so it should recover "
+         f"real coverage without reintroducing the confident-wrong answers the 0.65 "
+         f"bar was raised to prevent. Must be validated against --fail-under-accuracy "
+         f"on both corpora (see item 5) before it ships, precisely because the whole "
+         f"point is coverage that doesn't cost accuracy."),
         ("A model-catalog resilience check",
          "This run needed fresh validation of the Groq model lineup before "
          "launching — two prior runs were each blocked mid-flight by a model "
